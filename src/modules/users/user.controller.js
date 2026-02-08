@@ -10,6 +10,38 @@ const createUser = asyncHandler(async (req, res) => {
   });
 });
 
+const getCustomDetailKeys = asyncHandler(async (req, res) => {
+  const keys = await userService.getCustomDetailKeys();
+  return ApiResponse.success(res, {
+    message: 'تم جلب قائمة المفاتيح بنجاح',
+    data: keys,
+  });
+});
+
+const getFamilyNames = asyncHandler(async (req, res) => {
+  const names = await userService.getFamilyNames();
+  return ApiResponse.success(res, {
+    message: 'تم جلب قائمة أسماء العائلات بنجاح',
+    data: names,
+  });
+});
+
+const getRelationRoles = asyncHandler(async (req, res) => {
+  const roles = await userService.getRelationRoles();
+  return ApiResponse.success(res, {
+    message: 'تم جلب قائمة أوصاف صلة القرابة بنجاح',
+    data: roles,
+  });
+});
+
+const createRelationRole = asyncHandler(async (req, res) => {
+  const role = await userService.createRelationRole(req.body.label);
+  return ApiResponse.created(res, {
+    message: 'تم إضافة وصف صلة القرابة بنجاح',
+    data: role,
+  });
+});
+
 const listUsers = asyncHandler(async (req, res) => {
   const { cursor, limit, sort, order, ...filters } = req.query;
 
@@ -55,6 +87,15 @@ const deleteUser = asyncHandler(async (req, res) => {
   });
 });
 
+/** Upload image to Cloudinary only (for new user create flow). Returns { url, publicId }. */
+const uploadAvatarImage = asyncHandler(async (req, res) => {
+  const avatar = await userService.uploadImageToCloudinary(req.file);
+  return ApiResponse.success(res, {
+    message: 'تم رفع الصورة بنجاح',
+    data: avatar,
+  });
+});
+
 const uploadAvatar = asyncHandler(async (req, res) => {
   const avatar = await userService.uploadAvatar(req.params.id, req.file, req.user.id);
   return ApiResponse.success(res, {
@@ -97,10 +138,15 @@ const linkFamily = asyncHandler(async (req, res) => {
 
 module.exports = {
   createUser,
+  getCustomDetailKeys,
+  getFamilyNames,
+  getRelationRoles,
+  createRelationRole,
   listUsers,
   getUser,
   updateUser,
   deleteUser,
+  uploadAvatarImage,
   uploadAvatar,
   lockUser,
   unlockUser,

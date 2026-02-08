@@ -27,6 +27,15 @@ const addressSchema = Joi.object({
   details: Joi.string().trim().allow('', null).optional(),
 });
 
+/* ──────── فرد عائلة (للتحديث) ──────── */
+
+const familyMemberSchema = Joi.object({
+  userId: Joi.string().pattern(OBJECT_ID_PATTERN).allow(null).optional(),
+  name: Joi.string().trim().allow('', null).optional(),
+  relationRole: Joi.string().trim().allow('', null).optional(),
+  notes: Joi.string().trim().allow('', null).optional(),
+});
+
 /* ──────── إنشاء مستخدم ──────── */
 
 const createUser = {
@@ -82,6 +91,13 @@ const createUser = {
       .items(Joi.string().valid(...PERMISSIONS_ARRAY))
       .optional(),
     confessionFatherName: Joi.string().trim().allow('', null).optional(),
+    avatar: Joi.object({
+      url: Joi.string().uri().required(),
+      publicId: Joi.string().required(),
+    }).optional(),
+    customDetails: Joi.object()
+      .pattern(Joi.string().trim().min(1), Joi.string().trim().allow(''))
+      .optional(),
   }),
 };
 
@@ -110,6 +126,19 @@ const updateUser = {
       .items(Joi.string().valid(...PERMISSIONS_ARRAY))
       .optional(),
     confessionFatherName: Joi.string().trim().allow(null, '').optional(),
+    avatar: Joi.object({
+      url: Joi.string().uri().allow(null),
+      publicId: Joi.string().allow(null),
+    }).optional(),
+    customDetails: Joi.object()
+      .pattern(Joi.string().trim().min(1), Joi.string().trim().allow(''))
+      .optional(),
+    father: familyMemberSchema.allow(null).optional(),
+    mother: familyMemberSchema.allow(null).optional(),
+    spouse: familyMemberSchema.allow(null).optional(),
+    siblings: Joi.array().items(familyMemberSchema).optional(),
+    children: Joi.array().items(familyMemberSchema).optional(),
+    familyMembers: Joi.array().items(familyMemberSchema).optional(),
   })
     .min(1)
     .messages({ 'object.min': 'يجب تقديم حقل واحد على الأقل للتحديث' }),
@@ -194,6 +223,17 @@ const linkFamily = {
   }),
 };
 
+/* ──────── إضافة وصف صلة قرابة ──────── */
+
+const createRelationRole = {
+  body: Joi.object({
+    label: Joi.string().trim().min(1).required().messages({
+      'string.empty': 'وصف صلة القرابة مطلوب',
+      'any.required': 'وصف صلة القرابة مطلوب',
+    }),
+  }),
+};
+
 module.exports = {
   idParam,
   createUser,
@@ -202,4 +242,5 @@ module.exports = {
   lockUser,
   manageTags,
   linkFamily,
+  createRelationRole,
 };

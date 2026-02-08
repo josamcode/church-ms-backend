@@ -24,6 +24,44 @@ router.post(
   userController.createUser
 );
 
+router.post(
+  '/upload-avatar',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.USERS_UPLOAD_AVATAR),
+  uploadLimiter,
+  upload.single('avatar'),
+  userController.uploadAvatarImage
+);
+
+router.get(
+  '/custom-detail-keys',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.USERS_VIEW),
+  userController.getCustomDetailKeys
+);
+
+router.get(
+  '/family-names',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.USERS_VIEW),
+  userController.getFamilyNames
+);
+
+router.get(
+  '/relation-roles',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.USERS_VIEW),
+  userController.getRelationRoles
+);
+
+router.post(
+  '/relation-roles',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.USERS_UPDATE),
+  validate(userValidators.createRelationRole),
+  userController.createRelationRole
+);
+
 router.get(
   '/',
   authenticateJWT,

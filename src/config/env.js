@@ -35,6 +35,11 @@ module.exports = {
     origin: process.env.CORS_ORIGIN || '*',
   },
 
+  site: {
+    name: process.env.SITE_NAME || 'كنيسة الملاك ميخائيل',
+    tagline: process.env.SITE_TAGLINE || 'قرية القطوشة - التابعة لإيبارشية مطاى',
+  },
+
   rateLimit: {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 15 * 60 * 1000,
     max: parseInt(process.env.RATE_LIMIT_MAX, 10) || 100,
