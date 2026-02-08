@@ -12,9 +12,15 @@ module.exports = {
   },
 
   redis: {
-    host: process.env.REDIS_HOST || '127.0.0.1',
-    port: parseInt(process.env.REDIS_PORT, 10) || 6379,
+    url: process.env.REDIS_URL,
+    host: process.env.REDIS_HOST,
+    port: process.env.REDIS_PORT
+      ? parseInt(process.env.REDIS_PORT, 10)
+      : process.env.REDIS_HOST
+        ? 6379
+        : undefined,
     password: process.env.REDIS_PASSWORD || undefined,
+    enabled: process.env.REDIS_ENABLED ? process.env.REDIS_ENABLED !== 'false' : true,
   },
 
   jwt: {
