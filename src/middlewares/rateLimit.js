@@ -22,7 +22,7 @@ const createRateLimiter = (windowMs, max, message, storePrefix = 'rl:') => {
     },
   };
 
-  if (redisClient.status !== 'fallback') {
+  if (redisClient.status === 'ready') {
     try {
       options.store = new RedisStore({
         sendCommand: (...args) => redisClient.call(...args),
