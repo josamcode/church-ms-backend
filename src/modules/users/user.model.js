@@ -108,6 +108,11 @@ const userSchema = new mongoose.Schema(
     },
     address: addressSchema,
     tags: [{ type: String, trim: true }],
+    /** تفاصيل مخصصة (مفتاح - قيمة) يضيفها المستخدم */
+    customDetails: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({}),
+    },
 
     // ═══════ B) الحالة المشتقة ═══════
     ageGroup: {

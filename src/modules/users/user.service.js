@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const User = require('./user.model');
+const RelationRole = require('./relationRole.model');
 const ApiError = require('../../utils/ApiError');
 const redisClient = require('../../config/redis');
 const cloudinary = require('../../config/cloudinary');
@@ -33,6 +34,9 @@ class UserService {
     }
 
     const userData = { ...data, createdBy: createdByUserId };
+    if (data.avatar && typeof data.avatar === 'object' && data.avatar.url && data.avatar.publicId) {
+      userData.avatar = { url: data.avatar.url, publicId: data.avatar.publicId };
+    }
 
     if (data.password) {
       userData.hasLogin = true;
@@ -104,37 +108,187 @@ class UserService {
   }
 
   /**
-   * جلب مستخدم بالمعرف
+   * جلب قائمة مفاتيح التفاصيل المخصصة المستخدمة مسبقاً (لاقتراحها عند إنشاء مستخدم جديد)
+   */
+  async getCustomDetailKeys() {
+    const result = await User.aggregate([
+      { $match: { isDeleted: { $ne: true } } },
+      { $project: { keys: { $objectToArray: { $ifNull: ['$customDetails', {}] } } } },
+      { $unwind: '$keys' },
+      { $group: { _id: '$keys.k' } },
+      { $sort: { _id: 1 } },
+      { $group: { _id: null, keys: { $push: '$_id' } } },
+      { $project: { _id: 0, keys: 1 } },
+    ]);
+    const keys = result[0]?.keys ?? [];
+    return keys;
+  }
+
+  /**
+   * جلب قائمة أوصاف صلة القرابة (من DB للتوحيد). تُزرع القيم الافتراضية عند أول طلب إن لم توجد.
+   */
+  async getRelationRoles() {
+    await RelationRole.seedDefaultRelationRoles();
+    const roles = await RelationRole.find().sort({ order: 1, label: 1 }).lean();
+    return roles.map((r) => ({ id: r._id, label: r.label, relation: r.relation }));
+  }
+
+  /**
+   * إضافة وصف صلة قرابة جديد (يُخزن كـ other)
+   */
+  async createRelationRole(label) {
+    const trimmed = (label || '').trim();
+    if (!trimmed) throw ApiError.badRequest('وصف صلة القرابة مطلوب', 'VALIDATION_ERROR');
+    const existing = await RelationRole.findOne({ label: trimmed });
+    if (existing) return existing.toObject();
+    const maxOrder = await RelationRole.findOne().sort({ order: -1 }).select('order').lean();
+    const role = await RelationRole.create({
+      label: trimmed,
+      relation: 'other',
+      order: (maxOrder?.order ?? 99) + 1,
+    });
+    return role.toObject();
+  }
+
+  /**
+   * جلب قائمة أسماء العائلات المستخدمة مسبقاً (لاقتراحها عند إنشاء مستخدم جديد)
+   */
+  async getFamilyNames() {
+    const result = await User.aggregate([
+      { $match: { isDeleted: { $ne: true }, familyName: { $exists: true, $nin: [null, ''] } } },
+      { $group: { _id: '$familyName' } },
+      { $match: { _id: { $regex: /\S/ } } },
+      { $sort: { _id: 1 } },
+      { $group: { _id: null, names: { $push: '$_id' } } },
+      { $project: { _id: 0, names: 1 } },
+    ]);
+    const names = (result[0]?.names ?? []).map((n) => (typeof n === 'string' ? n.trim() : n)).filter(Boolean);
+    return [...new Set(names)].sort();
+  }
+
+  /**
+   * جلب العلاقات العكسية: مستخدمون أضافوا هذا المستخدم في عائلتهم (أب، أم، زوج، إلخ)
+   * يُستخدم لعرض "من يرتبط بي من جهة الآخرين" دون تخزين في الكاش
+   */
+  async getInverseFamily(userId) {
+    const id =
+      typeof userId === 'string' && mongoose.Types.ObjectId.isValid(userId)
+        ? new mongoose.Types.ObjectId(userId)
+        : userId;
+    const users = await User.find({
+      $or: [
+        { 'father.userId': id },
+        { 'mother.userId': id },
+        { 'spouse.userId': id },
+        { 'siblings.userId': id },
+        { 'children.userId': id },
+        { 'familyMembers.userId': id },
+      ],
+      isDeleted: { $ne: true },
+    })
+      .select('fullName phonePrimary gender father mother spouse siblings children familyMembers')
+      .lean();
+
+    const result = [];
+    const uidStr = id.toString();
+
+    for (const u of users) {
+      let linkType = null;
+      let notes = '';
+      let relationRoleFromOther = '';
+
+      if (u.father?.userId?.toString() === uidStr) {
+        linkType = 'father';
+        notes = u.father.notes || '';
+      } else if (u.mother?.userId?.toString() === uidStr) {
+        linkType = 'mother';
+        notes = u.mother.notes || '';
+      } else if (u.spouse?.userId?.toString() === uidStr) {
+        linkType = 'spouse';
+        notes = u.spouse.notes || '';
+      } else if (u.siblings?.length) {
+        const s = u.siblings.find((s) => s.userId?.toString() === uidStr);
+        if (s) {
+          linkType = 'sibling';
+          notes = s.notes || '';
+        }
+      }
+      if (!linkType && u.children?.length) {
+        const c = u.children.find((c) => c.userId?.toString() === uidStr);
+        if (c) {
+          linkType = 'child';
+          notes = c.notes || '';
+        }
+      }
+      if (!linkType && u.familyMembers?.length) {
+        const m = u.familyMembers.find((m) => m.userId?.toString() === uidStr);
+        if (m) {
+          linkType = 'other';
+          notes = m.notes || '';
+          relationRoleFromOther = (m.relationRole || '').trim();
+        }
+      }
+
+      if (!linkType) continue;
+
+      const isMale = u.gender === 'male';
+      const isFemale = u.gender === 'female';
+      let relationRole;
+      if (linkType === 'father' || linkType === 'mother') {
+        relationRole = isMale ? 'الابن' : isFemale ? 'البنت' : 'الابن';
+      } else if (linkType === 'spouse') {
+        relationRole = isMale ? 'الزوج' : isFemale ? 'الزوجة' : 'الزوج';
+      } else if (linkType === 'sibling') {
+        relationRole = isMale ? 'الأخ' : isFemale ? 'الأخت' : 'الأخ';
+      } else if (linkType === 'child') {
+        relationRole = isMale ? 'الأب' : isFemale ? 'الأم' : 'الوالد';
+      } else {
+        relationRole = relationRoleFromOther || 'آخر';
+      }
+
+      result.push({
+        userId: u._id,
+        name: u.fullName,
+        relationRole,
+        notes,
+        _inverse: true,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * جلب مستخدم بالمعرف (مع العلاقات العكسية دون تخزينها في الكاش)
    */
   async getUserById(userId) {
-    // Check cache
+    let user;
     try {
       const cached = await redisClient.get(CACHE_KEYS.USER_PROFILE(userId));
-      if (cached) return JSON.parse(cached);
+      user = cached ? JSON.parse(cached) : null;
     } catch (err) {
       // Cache miss
     }
 
-    const user = await User.findById(userId)
-      .select('-changeLog -passwordHash -__v')
-      .lean();
-
     if (!user) {
-      throw ApiError.notFound('المستخدم غير موجود', 'USER_NOT_FOUND');
+      user = await User.findById(userId)
+        .select('-changeLog -passwordHash -__v')
+        .lean();
+      if (!user) {
+        throw ApiError.notFound('المستخدم غير موجود', 'USER_NOT_FOUND');
+      }
+      try {
+        await redisClient.setex(
+          CACHE_KEYS.USER_PROFILE(userId),
+          CACHE_TTL.USER_PROFILE,
+          JSON.stringify(user)
+        );
+      } catch (err) {
+        // Non-fatal
+      }
     }
 
-    // Cache
-    try {
-      await redisClient.setex(
-        CACHE_KEYS.USER_PROFILE(userId),
-        CACHE_TTL.USER_PROFILE,
-        JSON.stringify(user)
-      );
-    } catch (err) {
-      // Non-fatal
-    }
-
-    return user;
+    const inverseFamily = await this.getInverseFamily(user._id || user.id || userId);
+    return { ...user, inverseFamily };
   }
 
   /**
@@ -151,6 +305,8 @@ class UserService {
       'phonePrimary', 'phoneSecondary', 'whatsappNumber', 'email',
       'address', 'tags', 'familyName', 'role', 'extraPermissions',
       'deniedPermissions', 'confessionFatherName', 'confessionFatherUserId',
+      'avatar', 'customDetails',
+      'father', 'mother', 'spouse', 'siblings', 'children', 'familyMembers',
     ];
 
     const changes = [];
@@ -214,20 +370,18 @@ class UserService {
   }
 
   /**
-   * رفع الصورة الشخصية إلى Cloudinary
+   * رفع صورة إلى Cloudinary فقط (بدون ربط بمستخدم) - للاستخدام عند إنشاء مستخدم جديد
    */
-  async uploadAvatar(userId, file, updatedByUserId) {
+  async uploadImageToCloudinary(file) {
     if (!file) {
       throw ApiError.badRequest('يجب اختيار صورة', 'UPLOAD_FAILED');
     }
-
     if (!config.upload.allowedImageTypes.includes(file.mimetype)) {
       throw ApiError.badRequest(
         'نوع الملف غير مسموح به. الأنواع المسموحة: JPEG, PNG, GIF, WEBP',
         'UPLOAD_INVALID_TYPE'
       );
     }
-
     if (file.size > config.upload.maxFileSize) {
       throw ApiError.badRequest(
         `حجم الملف يتجاوز الحد المسموح (${Math.round(config.upload.maxFileSize / 1024 / 1024)} ميجابايت)`,
@@ -235,21 +389,6 @@ class UserService {
       );
     }
 
-    const user = await User.findById(userId);
-    if (!user) {
-      throw ApiError.notFound('المستخدم غير موجود', 'USER_NOT_FOUND');
-    }
-
-    // Delete old avatar if exists
-    if (user.avatar && user.avatar.publicId) {
-      try {
-        await cloudinary.uploader.destroy(user.avatar.publicId);
-      } catch (err) {
-        logger.warn(`فشل حذف الصورة القديمة: ${err.message}`);
-      }
-    }
-
-    // Upload via stream
     const result = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
@@ -272,14 +411,34 @@ class UserService {
       streamifier.createReadStream(file.buffer).pipe(uploadStream);
     });
 
+    return { url: result.secure_url, publicId: result.public_id };
+  }
+
+  /**
+   * رفع الصورة الشخصية إلى Cloudinary وربطها بمستخدم
+   */
+  async uploadAvatar(userId, file, updatedByUserId) {
+    const { url, publicId } = await this.uploadImageToCloudinary(file);
+
+    const user = await User.findById(userId);
+    if (!user) {
+      throw ApiError.notFound('المستخدم غير موجود', 'USER_NOT_FOUND');
+    }
+
+    // Delete old avatar if exists
+    if (user.avatar && user.avatar.publicId) {
+      try {
+        await cloudinary.uploader.destroy(user.avatar.publicId);
+      } catch (err) {
+        logger.warn(`فشل حذف الصورة القديمة: ${err.message}`);
+      }
+    }
+
     const oldAvatar = user.avatar
       ? { url: user.avatar.url, publicId: user.avatar.publicId }
       : null;
 
-    user.avatar = {
-      url: result.secure_url,
-      publicId: result.public_id,
-    };
+    user.avatar = { url, publicId };
     user.updatedBy = updatedByUserId;
     user.changeLog.push({
       by: updatedByUserId,

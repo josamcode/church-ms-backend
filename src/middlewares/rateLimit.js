@@ -4,7 +4,7 @@ const redisClient = require('../config/redis');
 const ApiResponse = require('../utils/apiResponse');
 const config = require('../config/env');
 
-const createRateLimiter = (windowMs, max, message) => {
+const createRateLimiter = (windowMs, max, message, storePrefix = 'rl:') => {
   const options = {
     windowMs,
     max,
@@ -26,6 +26,7 @@ const createRateLimiter = (windowMs, max, message) => {
     try {
       options.store = new RedisStore({
         sendCommand: (...args) => redisClient.call(...args),
+        prefix: storePrefix,
       });
     } catch (err) {
       // Fallback to memory store
@@ -38,19 +39,22 @@ const createRateLimiter = (windowMs, max, message) => {
 const generalLimiter = createRateLimiter(
   config.rateLimit.windowMs,
   config.rateLimit.max,
-  'تم تجاوز الحد المسموح به من الطلبات. يرجى المحاولة لاحقاً'
+  'تم تجاوز الحد المسموح به من الطلبات. يرجى المحاولة لاحقاً',
+  'rl:general:'
 );
 
 const authLimiter = createRateLimiter(
   15 * 60 * 1000,
   20,
-  'تم تجاوز عدد محاولات تسجيل الدخول. يرجى المحاولة بعد 15 دقيقة'
+  'تم تجاوز عدد محاولات تسجيل الدخول. يرجى المحاولة بعد 15 دقيقة',
+  'rl:auth:'
 );
 
 const uploadLimiter = createRateLimiter(
   60 * 60 * 1000,
   30,
-  'تم تجاوز الحد المسموح لرفع الملفات. يرجى المحاولة لاحقاً'
+  'تم تجاوز الحد المسموح لرفع الملفات. يرجى المحاولة لاحقاً',
+  'rl:upload:'
 );
 
 module.exports = { generalLimiter, authLimiter, uploadLimiter, createRateLimiter };
