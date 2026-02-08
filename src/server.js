@@ -8,7 +8,7 @@ const startServer = async () => {
     // Connect to MongoDB
     await connectDB();
 
-    const server = app.listen(config.port, () => {
+    const server = app.listen(config.port, '0.0.0.0', () => {
       logger.info(`الخادم يعمل على المنفذ ${config.port} في بيئة ${config.env}`);
       logger.info(`التوثيق متاح على http://localhost:${config.port}/api/docs`);
     });
