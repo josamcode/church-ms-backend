@@ -16,6 +16,7 @@ const logger = require('./utils/logger');
 const authRoutes = require('./modules/auth/auth.routes');
 const userRoutes = require('./modules/users/user.routes');
 const settingsRoutes = require('./modules/settings/settings.routes');
+const confessionsRoutes = require('./modules/confessions/confessions.routes');
 
 // Swagger
 const { swaggerUi, specs } = require('./docs/swagger');
@@ -83,6 +84,7 @@ app.use(
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/confessions', confessionsRoutes);
 
 /* ══════════════════ Health Check ══════════════════ */
 
