@@ -13,7 +13,7 @@ const User = require('../src/modules/users/user.model');
 const { ROLES } = require('../src/constants/roles');
 const { LOCK_REASONS } = require('../src/constants/lockReasons');
 
-const SEED_PASSWORD = 'Test123!@#'; // كلمة مرور موحدة لجميع الحسابات التجريبية
+const SEED_PASSWORD = 'Test1234'; // كلمة مرور موحدة لجميع الحسابات التجريبية
 const CLEAR_FIRST = process.env.SEED_CLEAR === '1';
 
 function dateYearsAgo(years) {
