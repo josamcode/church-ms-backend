@@ -167,6 +167,22 @@ class UserService {
   }
 
   /**
+   * جلب قائمة أسماء البيوت المستخدمة مسبقاً (لاقتراحها عند إنشاء مستخدم جديد)
+   */
+  async getHouseNames() {
+    const result = await User.aggregate([
+      { $match: { isDeleted: { $ne: true }, houseName: { $exists: true, $nin: [null, ''] } } },
+      { $group: { _id: '$houseName' } },
+      { $match: { _id: { $regex: /\S/ } } },
+      { $sort: { _id: 1 } },
+      { $group: { _id: null, names: { $push: '$_id' } } },
+      { $project: { _id: 0, names: 1 } },
+    ]);
+    const names = (result[0]?.names ?? []).map((n) => (typeof n === 'string' ? n.trim() : n)).filter(Boolean);
+    return [...new Set(names)].sort();
+  }
+
+  /**
    * جلب العلاقات العكسية: مستخدمون أضافوا هذا المستخدم في عائلتهم (أب، أم، زوج، إلخ)
    * يُستخدم لعرض "من يرتبط بي من جهة الآخرين" دون تخزين في الكاش
    */
@@ -303,7 +319,7 @@ class UserService {
     const allowedFields = [
       'fullName', 'gender', 'birthDate', 'nationalId', 'notes',
       'phonePrimary', 'phoneSecondary', 'whatsappNumber', 'email',
-      'address', 'tags', 'familyName', 'role', 'extraPermissions',
+      'address', 'tags', 'familyName', 'houseName', 'role', 'extraPermissions',
       'deniedPermissions', 'confessionFatherName', 'confessionFatherUserId',
       'avatar', 'customDetails',
       'father', 'mother', 'spouse', 'siblings', 'children', 'familyMembers',

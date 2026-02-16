@@ -77,6 +77,7 @@ const createUser = {
     address: addressSchema.optional(),
     tags: Joi.array().items(Joi.string().trim()).optional(),
     familyName: Joi.string().trim().allow('', null).optional(),
+    houseName: Joi.string().trim().allow('', null).optional(),
     role: Joi.string().valid(...ROLES_ARRAY).optional().messages({
       'any.only': 'الدور غير صالح',
     }),
@@ -118,6 +119,7 @@ const updateUser = {
     address: addressSchema.optional(),
     tags: Joi.array().items(Joi.string().trim()).optional(),
     familyName: Joi.string().trim().allow(null, '').optional(),
+    houseName: Joi.string().trim().allow(null, '').optional(),
     role: Joi.string().valid(...ROLES_ARRAY).optional(),
     extraPermissions: Joi.array()
       .items(Joi.string().valid(...PERMISSIONS_ARRAY))

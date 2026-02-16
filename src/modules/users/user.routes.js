@@ -48,6 +48,13 @@ router.get(
 );
 
 router.get(
+  '/house-names',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.USERS_VIEW),
+  userController.getHouseNames
+);
+
+router.get(
   '/relation-roles',
   authenticateJWT,
   authorizePermissions(PERMISSIONS.USERS_VIEW),

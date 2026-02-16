@@ -26,6 +26,14 @@ const getFamilyNames = asyncHandler(async (req, res) => {
   });
 });
 
+const getHouseNames = asyncHandler(async (req, res) => {
+  const names = await userService.getHouseNames();
+  return ApiResponse.success(res, {
+    message: 'تم جلب قائمة أسماء البيوت بنجاح',
+    data: names,
+  });
+});
+
 const getRelationRoles = asyncHandler(async (req, res) => {
   const roles = await userService.getRelationRoles();
   return ApiResponse.success(res, {
@@ -140,6 +148,7 @@ module.exports = {
   createUser,
   getCustomDetailKeys,
   getFamilyNames,
+  getHouseNames,
   getRelationRoles,
   createRelationRole,
   listUsers,

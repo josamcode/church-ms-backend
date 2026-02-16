@@ -122,6 +122,7 @@ const userSchema = new mongoose.Schema(
 
     // ═══════ C) بيانات العائلة ═══════
     familyName: { type: String, trim: true },
+    houseName: { type: String, trim: true },
     father: familyMemberSchema,
     mother: familyMemberSchema,
     spouse: familyMemberSchema,
