@@ -33,6 +33,10 @@ class ConfessionsService {
     const typeIsPopulated = sessionType && typeof sessionType === 'object' && sessionType.name;
     const sessionTypeId = typeIsPopulated ? sessionType._id : session.sessionTypeId;
 
+    const creator = session.createdBy || null;
+    const creatorIsPopulated = creator && typeof creator === 'object' && creator.fullName;
+    const creatorId = creatorIsPopulated ? creator._id : session.createdBy;
+
     return {
       id: session._id,
       attendee: {
@@ -49,7 +53,13 @@ class ConfessionsService {
       scheduledAt: session.scheduledAt,
       nextSessionAt: session.nextSessionAt || null,
       notes: session.notes || '',
-      createdBy: session.createdBy,
+      createdBy: creatorId || null,
+      createdByUser: creatorId
+        ? {
+            id: creatorId,
+            fullName: creatorIsPopulated ? creator.fullName : null,
+          }
+        : null,
       updatedBy: session.updatedBy || null,
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
@@ -237,6 +247,7 @@ class ConfessionsService {
     const populated = await ConfessionSession.findById(session._id)
       .populate('attendeeUserId', 'fullName phonePrimary avatar role')
       .populate('sessionTypeId', 'name')
+      .populate('createdBy', 'fullName')
       .lean();
 
     return this._mapSession(populated);
@@ -283,6 +294,7 @@ class ConfessionsService {
       .limit(limit)
       .populate('attendeeUserId', 'fullName phonePrimary avatar role')
       .populate('sessionTypeId', 'name')
+      .populate('createdBy', 'fullName')
       .lean();
 
     const meta = buildPaginationMeta(sessions, limit, 'scheduledAt');
