@@ -166,6 +166,7 @@ const listUsers = {
       .try(Joi.array().items(Joi.string()), Joi.string())
       .optional(),
     role: Joi.string().valid(...ROLES_ARRAY).optional(),
+    houseName: Joi.string().trim().optional(),
     gender: Joi.string().valid('male', 'female', 'other').optional(),
     isLocked: Joi.boolean().optional(),
   }),
