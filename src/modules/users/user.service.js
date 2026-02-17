@@ -76,6 +76,9 @@ class UserService {
     if (filters.role) {
       query.role = filters.role;
     }
+    if (filters.familyName) {
+      query.familyName = { $regex: filters.familyName, $options: 'i' };
+    }
     if (filters.houseName) {
       query.houseName = { $regex: filters.houseName, $options: 'i' };
     }
