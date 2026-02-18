@@ -1,7 +1,8 @@
 const ApiError = require('../utils/ApiError');
 const redisClient = require('../config/redis');
 const { CACHE_KEYS, CACHE_TTL } = require('../constants/cacheKeys');
-const { ROLE_PERMISSIONS } = require('../constants/permissions');
+const { ROLE_PERMISSIONS, PERMISSIONS_ARRAY } = require('../constants/permissions');
+const { ROLES } = require('../constants/roles');
 
 const getUserEffectivePermissions = async (userId, role, extraPermissions = [], deniedPermissions = []) => {
   try {
@@ -11,10 +12,15 @@ const getUserEffectivePermissions = async (userId, role, extraPermissions = [], 
     // Cache miss is not fatal
   }
 
-  const rolePerms = ROLE_PERMISSIONS[role] || [];
-  const effectiveSet = new Set([...rolePerms, ...extraPermissions]);
-  deniedPermissions.forEach((p) => effectiveSet.delete(p));
-  const effective = [...effectiveSet];
+  const effective =
+    role === ROLES.SUPER_ADMIN
+      ? [...PERMISSIONS_ARRAY]
+      : (() => {
+          const rolePerms = ROLE_PERMISSIONS[role] || [];
+          const effectiveSet = new Set([...rolePerms, ...extraPermissions]);
+          deniedPermissions.forEach((p) => effectiveSet.delete(p));
+          return [...effectiveSet];
+        })();
 
   try {
     await redisClient.setex(

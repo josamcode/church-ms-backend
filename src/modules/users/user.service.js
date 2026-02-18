@@ -7,6 +7,7 @@ const cloudinary = require('../../config/cloudinary');
 const streamifier = require('streamifier');
 const { CACHE_KEYS, CACHE_TTL } = require('../../constants/cacheKeys');
 const { buildPaginationMeta } = require('../../utils/pagination');
+const { ROLES } = require('../../constants/roles');
 const config = require('../../config/env');
 const logger = require('../../utils/logger');
 
@@ -15,6 +16,12 @@ class UserService {
    * إنشاء مستخدم جديد (مع أو بدون تسجيل دخول)
    */
   async createUser(data, createdByUserId) {
+    await this._assertRoleAndPermissionManagementAllowed({
+      actorUserId: createdByUserId,
+      targetUser: null,
+      updateData: data,
+    });
+
     const orConditions = [{ phonePrimary: data.phonePrimary }];
     if (data.email) orConditions.push({ email: data.email });
     if (data.nationalId) orConditions.push({ nationalId: data.nationalId });
@@ -321,6 +328,12 @@ class UserService {
     if (!user) {
       throw ApiError.notFound('المستخدم غير موجود', 'USER_NOT_FOUND');
     }
+
+    await this._assertRoleAndPermissionManagementAllowed({
+      actorUserId: updatedByUserId,
+      targetUser: user,
+      updateData: data,
+    });
 
     const allowedFields = [
       'fullName', 'gender', 'birthDate', 'nationalId', 'notes',
@@ -652,6 +665,29 @@ class UserService {
     await this._clearUserCache(userId);
 
     return user.toSafeObject();
+  }
+
+  _isChangingPermissionOverrides(updateData = {}) {
+    return updateData.extraPermissions !== undefined || updateData.deniedPermissions !== undefined;
+  }
+
+  async _assertRoleAndPermissionManagementAllowed({ actorUserId, targetUser, updateData }) {
+    const isChangingOverrides = this._isChangingPermissionOverrides(updateData);
+    const isTargetSuperAdmin = targetUser?.role === ROLES.SUPER_ADMIN;
+    const isPromotingToSuperAdmin = updateData?.role === ROLES.SUPER_ADMIN;
+
+    const touchesSensitiveAuthFields =
+      isChangingOverrides || isTargetSuperAdmin || isPromotingToSuperAdmin;
+
+    if (!touchesSensitiveAuthFields) return;
+
+    const actor = await User.findById(actorUserId).select('role').lean();
+    if (!actor || actor.role !== ROLES.SUPER_ADMIN) {
+      throw ApiError.forbidden(
+        'فقط مدير النظام يمكنه تعديل الصلاحيات أو أدوار مدير النظام',
+        'PERMISSION_DENIED'
+      );
+    }
   }
 
   /**
