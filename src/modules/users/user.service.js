@@ -362,6 +362,41 @@ class UserService {
       }
     }
 
+    if (data.password !== undefined) {
+      const nextPassword = typeof data.password === 'string' ? data.password.trim() : '';
+      if (nextPassword) {
+        if (!user.hasLogin) {
+          changes.push({
+            field: 'hasLogin',
+            from: false,
+            to: true,
+          });
+          user.hasLogin = true;
+        }
+
+        const nextLoginIdentifierType =
+          data.email !== undefined
+            ? (data.email ? 'email' : 'phone')
+            : (user.email ? 'email' : 'phone');
+
+        if (user.loginIdentifierType !== nextLoginIdentifierType) {
+          changes.push({
+            field: 'loginIdentifierType',
+            from: user.loginIdentifierType,
+            to: nextLoginIdentifierType,
+          });
+          user.loginIdentifierType = nextLoginIdentifierType;
+        }
+
+        changes.push({
+          field: 'passwordHash',
+          from: '[SECURED]',
+          to: '[SECURED]',
+        });
+        user.passwordHash = nextPassword;
+      }
+    }
+
     if (changes.length === 0) {
       return user.toSafeObject();
     }
