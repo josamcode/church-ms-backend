@@ -25,11 +25,22 @@ const sectorOfficialSchema = Joi.object({
   notes: Joi.string().trim().max(500).allow('', null).optional(),
 }).or('userId', 'name');
 
+const servantGroupAssignmentSchema = Joi.object({
+  group: Joi.string().trim().max(120).required(),
+  servedUserIds: Joi.array().items(objectIdField).default([]),
+});
+
+const meetingGroupAssignmentSchema = Joi.object({
+  group: Joi.string().trim().max(120).required(),
+  servedUserIds: Joi.array().items(objectIdField).default([]),
+});
+
 const servantSchema = Joi.object({
   userId: objectIdField.optional(),
   name: Joi.string().trim().min(2).max(160).optional(),
   responsibility: Joi.string().trim().max(160).allow('', null).optional(),
   groupsManaged: Joi.array().items(Joi.string().trim().max(120)).default([]),
+  groupAssignments: Joi.array().items(servantGroupAssignmentSchema).default([]),
   servedUserIds: Joi.array().items(objectIdField).default([]),
   notes: Joi.string().trim().max(1000).allow('', null).optional(),
 }).or('userId', 'name');
@@ -117,6 +128,7 @@ const createMeeting = {
     servants: Joi.array().items(servantSchema).default([]),
     servedUserIds: Joi.array().items(objectIdField).default([]),
     groups: Joi.array().items(Joi.string().trim().max(120)).default([]),
+    groupAssignments: Joi.array().items(meetingGroupAssignmentSchema).default([]),
     committees: Joi.array().items(committeeSchema).default([]),
     activities: Joi.array().items(meetingActivitySchema).default([]),
     notes: Joi.string().trim().max(3000).allow('', null).optional(),
@@ -148,6 +160,7 @@ const updateMeetingBasic = {
     assistantSecretaries: Joi.array().items(personLinkSchema).optional(),
     servedUserIds: Joi.array().items(objectIdField).optional(),
     groups: Joi.array().items(Joi.string().trim().max(120)).optional(),
+    groupAssignments: Joi.array().items(meetingGroupAssignmentSchema).optional(),
     notes: Joi.string().trim().max(3000).allow('', null).optional(),
   })
     .min(1)

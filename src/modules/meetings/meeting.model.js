@@ -24,6 +24,40 @@ const personRefSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const servantGroupAssignmentSchema = new mongoose.Schema(
+  {
+    group: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 120,
+    },
+    servedUserIds: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: 'User',
+      default: [],
+    },
+  },
+  { _id: false }
+);
+
+const meetingGroupAssignmentSchema = new mongoose.Schema(
+  {
+    group: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 120,
+    },
+    servedUserIds: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: 'User',
+      default: [],
+    },
+  },
+  { _id: false }
+);
+
 const servantSchema = new mongoose.Schema(
   {
     userId: {
@@ -48,6 +82,10 @@ const servantSchema = new mongoose.Schema(
     },
     groupsManaged: {
       type: [String],
+      default: [],
+    },
+    groupAssignments: {
+      type: [servantGroupAssignmentSchema],
       default: [],
     },
     servedUserIds: {
@@ -179,6 +217,10 @@ const meetingSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    groupAssignments: {
+      type: [meetingGroupAssignmentSchema],
+      default: [],
+    },
     committees: {
       type: [committeeSchema],
       default: [],
@@ -230,6 +272,31 @@ meetingSchema.pre('validate', function (next) {
     this.groups = [...new Set(this.groups.map((entry) => String(entry || '').trim()).filter(Boolean))];
   }
 
+  if (Array.isArray(this.groupAssignments)) {
+    const mergedByGroup = new Map();
+
+    this.groupAssignments.forEach((assignment) => {
+      const groupName = String(assignment?.group || '').trim();
+      if (!groupName) return;
+      const ids = (assignment?.servedUserIds || []).map((entry) => String(entry || '').trim()).filter(Boolean);
+
+      if (!mergedByGroup.has(groupName)) {
+        mergedByGroup.set(groupName, new Set(ids));
+        return;
+      }
+
+      ids.forEach((id) => mergedByGroup.get(groupName).add(id));
+    });
+
+    this.groupAssignments = [...mergedByGroup.entries()].map(([group, ids]) => ({
+      group,
+      servedUserIds: [...ids],
+    }));
+
+    const assignmentGroups = this.groupAssignments.map((entry) => entry.group);
+    this.groups = [...new Set([...(this.groups || []), ...assignmentGroups])];
+  }
+
   if (Array.isArray(this.servants)) {
     this.servants = this.servants.map((servant) => {
       if (typeof servant?.name === 'string') {
@@ -243,6 +310,33 @@ meetingSchema.pre('validate', function (next) {
         servant.groupsManaged = [
           ...new Set(servant.groupsManaged.map((entry) => String(entry || '').trim()).filter(Boolean)),
         ];
+      }
+
+      if (Array.isArray(servant?.groupAssignments)) {
+        const mergedByGroup = new Map();
+
+        servant.groupAssignments.forEach((assignment) => {
+          const groupName = String(assignment?.group || '').trim();
+          if (!groupName) return;
+          const ids = (assignment?.servedUserIds || [])
+            .map((entry) => String(entry || '').trim())
+            .filter(Boolean);
+
+          if (!mergedByGroup.has(groupName)) {
+            mergedByGroup.set(groupName, new Set(ids));
+            return;
+          }
+
+          ids.forEach((id) => mergedByGroup.get(groupName).add(id));
+        });
+
+        servant.groupAssignments = [...mergedByGroup.entries()].map(([group, ids]) => ({
+          group,
+          servedUserIds: [...ids],
+        }));
+
+        const assignmentGroups = servant.groupAssignments.map((entry) => entry.group);
+        servant.groupsManaged = [...new Set([...(servant.groupsManaged || []), ...assignmentGroups])];
       }
       return servant;
     });
