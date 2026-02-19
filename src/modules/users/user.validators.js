@@ -121,6 +121,10 @@ const updateUser = {
     familyName: Joi.string().trim().allow(null, '').optional(),
     houseName: Joi.string().trim().allow(null, '').optional(),
     role: Joi.string().valid(...ROLES_ARRAY).optional(),
+    password: Joi.string().pattern(PASSWORD_PATTERN).optional().messages({
+      'string.pattern.base':
+        'كلمة المرور يجب أن تحتوي على 8 أحرف على الأقل وتشمل حرف كبير وحرف صغير ورقم ورمز خاص',
+    }),
     extraPermissions: Joi.array()
       .items(Joi.string().valid(...PERMISSIONS_ARRAY))
       .optional(),
