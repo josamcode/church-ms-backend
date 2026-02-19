@@ -48,8 +48,14 @@ class MeetingsService {
     (payload.servants || []).forEach((servant) => {
       pushId(servant.userId);
       (servant.servedUserIds || []).forEach((servedId) => pushId(servedId));
+      (servant.groupAssignments || []).forEach((assignment) => {
+        (assignment.servedUserIds || []).forEach((servedId) => pushId(servedId));
+      });
     });
     (payload.servedUserIds || []).forEach((servedId) => pushId(servedId));
+    (payload.groupAssignments || []).forEach((assignment) => {
+      (assignment.servedUserIds || []).forEach((servedId) => pushId(servedId));
+    });
     (payload.committees || []).forEach((committee) => {
       (committee.memberUserIds || []).forEach((memberId) => pushId(memberId));
     });
@@ -100,18 +106,51 @@ class MeetingsService {
     });
   }
 
+  _normalizeServantGroupAssignments(assignments = []) {
+    const mergedByGroup = new Map();
+
+    (assignments || []).forEach((assignment) => {
+      const groupName = this._normalizeText(assignment?.group);
+      if (!groupName) return;
+
+      const servedUserIds = (assignment?.servedUserIds || [])
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => this._toId(id));
+
+      if (!mergedByGroup.has(groupName)) {
+        mergedByGroup.set(groupName, new Set(servedUserIds));
+        return;
+      }
+
+      servedUserIds.forEach((id) => mergedByGroup.get(groupName).add(id));
+    });
+
+    return [...mergedByGroup.entries()].map(([group, servedUserIds]) => ({
+      group,
+      servedUserIds: [...servedUserIds],
+    }));
+  }
+
   _hydrateServants(servants = [], userMap) {
     return (servants || []).map((servant) => {
       const hydratedPerson = this._hydratePerson(servant, userMap);
-      const servedUserIds = (servant.servedUserIds || [])
+      const directServedUserIds = (servant.servedUserIds || [])
         .filter((id) => mongoose.Types.ObjectId.isValid(id))
         .map((id) => this._toId(id));
+      const groupAssignments = this._normalizeServantGroupAssignments(servant.groupAssignments || []);
+      const groupedServedUserIds = groupAssignments.flatMap((entry) => entry.servedUserIds || []);
+      const groupsManaged = this._normalizeUniqueStrings([
+        ...(servant.groupsManaged || []),
+        ...groupAssignments.map((entry) => entry.group),
+      ]);
+      const servedUserIds = [...new Set([...directServedUserIds, ...groupedServedUserIds])];
 
       return {
         ...hydratedPerson,
         responsibility: this._normalizeText(servant.responsibility) || undefined,
-        groupsManaged: this._normalizeUniqueStrings(servant.groupsManaged || []),
-        servedUserIds: [...new Set(servedUserIds)],
+        groupsManaged,
+        groupAssignments: groupAssignments.filter((entry) => groupsManaged.includes(entry.group)),
+        servedUserIds,
         notes: this._normalizeText(servant.notes) || undefined,
       };
     });
@@ -136,6 +175,31 @@ class MeetingsService {
       type: this._normalizeText(activity.type) || 'other',
       ...(activity.scheduledAt ? { scheduledAt: new Date(activity.scheduledAt) } : {}),
       notes: this._normalizeText(activity.notes) || undefined,
+    }));
+  }
+
+  _normalizeMeetingGroupAssignments(assignments = []) {
+    const mergedByGroup = new Map();
+
+    (assignments || []).forEach((assignment) => {
+      const groupName = this._normalizeText(assignment?.group);
+      if (!groupName) return;
+
+      const servedUserIds = (assignment?.servedUserIds || [])
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => this._toId(id));
+
+      if (!mergedByGroup.has(groupName)) {
+        mergedByGroup.set(groupName, new Set(servedUserIds));
+        return;
+      }
+
+      servedUserIds.forEach((id) => mergedByGroup.get(groupName).add(id));
+    });
+
+    return [...mergedByGroup.entries()].map(([group, servedUserIds]) => ({
+      group,
+      servedUserIds: [...servedUserIds],
     }));
   }
 
@@ -212,12 +276,24 @@ class MeetingsService {
     const servedUsers = (meeting.servedUserIds || []).map((servedUser) =>
       this._mapLinkedUserFromAny(servedUser)
     );
+    const groupAssignments = (meeting.groupAssignments || []).map((assignment) => ({
+      group: assignment.group,
+      servedUsers: (assignment.servedUserIds || []).map((servedUser) =>
+        this._mapLinkedUserFromAny(servedUser)
+      ),
+    }));
 
     const servants = (meeting.servants || []).map((servant) => ({
       id: this._toId(servant._id),
       name: servant.name,
       responsibility: servant.responsibility || '',
       groupsManaged: servant.groupsManaged || [],
+      groupAssignments: (servant.groupAssignments || []).map((assignment) => ({
+        group: assignment.group,
+        servedUsers: (assignment.servedUserIds || []).map((servedUser) =>
+          this._mapLinkedUserFromAny(servedUser)
+        ),
+      })),
       notes: servant.notes || '',
       user:
         servant.userId && typeof servant.userId === 'object'
@@ -259,6 +335,7 @@ class MeetingsService {
       servants,
       servedUsers,
       groups: meeting.groups || [],
+      groupAssignments,
       committees,
       activities,
       notes: meeting.notes || '',
@@ -279,10 +356,16 @@ class MeetingsService {
     push(meeting.serviceSecretary?.userId);
     (meeting.assistantSecretaries || []).forEach((assistant) => push(assistant.userId));
     (meeting.servedUserIds || []).forEach((servedId) => push(servedId));
+    (meeting.groupAssignments || []).forEach((assignment) => {
+      (assignment.servedUserIds || []).forEach((servedId) => push(servedId));
+    });
 
     (meeting.servants || []).forEach((servant) => {
       push(servant.userId);
       (servant.servedUserIds || []).forEach((servedId) => push(servedId));
+      (servant.groupAssignments || []).forEach((assignment) => {
+        (assignment.servedUserIds || []).forEach((servedId) => push(servedId));
+      });
     });
 
     (meeting.committees || []).forEach((committee) => {
@@ -561,6 +644,12 @@ class MeetingsService {
 
     const userIds = this._extractPayloadUserIds(payload);
     const userMap = await this._buildUserMap(userIds);
+    const groupAssignments = this._normalizeMeetingGroupAssignments(payload.groupAssignments || []);
+    const groups = this._normalizeUniqueStrings([
+      ...(payload.groups || []),
+      ...groupAssignments.map((entry) => entry.group),
+    ]);
+    const groupedServedUserIds = [...new Set(groupAssignments.flatMap((entry) => entry.servedUserIds || []))];
 
     const meeting = await Meeting.create({
       sectorId: payload.sectorId,
@@ -575,8 +664,14 @@ class MeetingsService {
         this._hydratePerson(assistant, userMap)
       ),
       servants: this._hydrateServants(payload.servants || [], userMap),
-      servedUserIds: [...new Set((payload.servedUserIds || []).map((id) => this._toId(id)))],
-      groups: this._normalizeUniqueStrings(payload.groups || []),
+      servedUserIds: [
+        ...new Set([
+          ...(payload.servedUserIds || []).map((id) => this._toId(id)),
+          ...groupedServedUserIds,
+        ]),
+      ],
+      groups,
+      groupAssignments,
       committees: this._hydrateCommittees(payload.committees || [], userMap),
       activities: this._hydrateActivities(payload.activities || []),
       notes: this._normalizeText(payload.notes) || undefined,
@@ -626,7 +721,9 @@ class MeetingsService {
       .populate('assistantSecretaries.userId', 'fullName phonePrimary')
       .populate('servants.userId', 'fullName phonePrimary')
       .populate('servants.servedUserIds', 'fullName phonePrimary')
+      .populate('servants.groupAssignments.servedUserIds', 'fullName phonePrimary')
       .populate('servedUserIds', 'fullName phonePrimary')
+      .populate('groupAssignments.servedUserIds', 'fullName phonePrimary')
       .populate('committees.memberUserIds', 'fullName phonePrimary')
       .lean();
 
@@ -643,7 +740,9 @@ class MeetingsService {
       .populate('assistantSecretaries.userId', 'fullName phonePrimary')
       .populate('servants.userId', 'fullName phonePrimary')
       .populate('servants.servedUserIds', 'fullName phonePrimary')
+      .populate('servants.groupAssignments.servedUserIds', 'fullName phonePrimary')
       .populate('servedUserIds', 'fullName phonePrimary')
+      .populate('groupAssignments.servedUserIds', 'fullName phonePrimary')
       .populate('committees.memberUserIds', 'fullName phonePrimary')
       .lean();
 
@@ -669,6 +768,7 @@ class MeetingsService {
 
     const userIds = this._extractPayloadUserIds(payload);
     const userMap = await this._buildUserMap(userIds);
+    const nextMeetingGroupAssignments = this._normalizeMeetingGroupAssignments(payload.groupAssignments || []);
 
     if (payload.name !== undefined) meeting.name = payload.name;
     if (payload.day !== undefined) meeting.day = payload.day;
@@ -693,6 +793,19 @@ class MeetingsService {
 
     if (payload.groups !== undefined) {
       meeting.groups = this._normalizeUniqueStrings(payload.groups);
+    }
+
+    if (payload.groupAssignments !== undefined) {
+      meeting.groupAssignments = nextMeetingGroupAssignments;
+      meeting.groups = this._normalizeUniqueStrings([
+        ...(meeting.groups || []),
+        ...nextMeetingGroupAssignments.map((entry) => entry.group),
+      ]);
+
+      const groupedServedUserIds = [
+        ...new Set(nextMeetingGroupAssignments.flatMap((entry) => entry.servedUserIds || [])),
+      ];
+      meeting.servedUserIds = [...new Set([...(meeting.servedUserIds || []), ...groupedServedUserIds])];
     }
 
     if (payload.notes !== undefined) {
