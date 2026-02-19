@@ -307,11 +307,17 @@ class ConfessionsService {
 
   async searchUsers({ fullName, phonePrimary, limit = 15 }) {
     const query = {};
+    const orConditions = [];
     if (fullName) {
-      query.fullName = { $regex: fullName, $options: 'i' };
+      orConditions.push({ fullName: { $regex: fullName, $options: 'i' } });
     }
     if (phonePrimary) {
-      query.phonePrimary = { $regex: phonePrimary, $options: 'i' };
+      orConditions.push({ phonePrimary: { $regex: phonePrimary, $options: 'i' } });
+    }
+    if (orConditions.length === 1) {
+      Object.assign(query, orConditions[0]);
+    } else if (orConditions.length > 1) {
+      query.$or = orConditions;
     }
 
     const users = await User.find(query)

@@ -65,11 +65,19 @@ class UserService {
     const query = {};
 
     // Filters
+    const namePhoneOrConditions = [];
     if (filters.fullName) {
-      query.fullName = { $regex: filters.fullName, $options: 'i' };
+      namePhoneOrConditions.push({ fullName: { $regex: filters.fullName, $options: 'i' } });
     }
     if (filters.phonePrimary) {
-      query.phonePrimary = { $regex: filters.phonePrimary, $options: 'i' };
+      namePhoneOrConditions.push({
+        phonePrimary: { $regex: filters.phonePrimary, $options: 'i' },
+      });
+    }
+    if (namePhoneOrConditions.length === 1) {
+      Object.assign(query, namePhoneOrConditions[0]);
+    } else if (namePhoneOrConditions.length > 1) {
+      query.$or = namePhoneOrConditions;
     }
     if (filters.ageGroup) {
       query.ageGroup = filters.ageGroup;
