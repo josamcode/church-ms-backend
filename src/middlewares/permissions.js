@@ -35,42 +35,47 @@ const getUserEffectivePermissions = async (userId, role, extraPermissions = [], 
   return effective;
 };
 
+const resolveRequestPermissions = async (req) => {
+  if (!req.user) {
+    throw ApiError.unauthorized('ظٹط¬ط¨ طھط³ط¬ظٹظ„ ط§ظ„ط¯ط®ظˆظ„ ط£ظˆظ„ط§ظ‹', 'AUTH_UNAUTHORIZED');
+  }
+
+  const User = require('mongoose').model('User');
+  const user = await User.findById(req.user.id)
+    .select('role extraPermissions deniedPermissions isLocked isDeleted')
+    .lean();
+
+  if (!user || user.isDeleted) {
+    throw ApiError.notFound('ط§ظ„ظ…ط³طھط®ط¯ظ… ط؛ظٹط± ظ…ظˆط¬ظˆط¯', 'USER_NOT_FOUND');
+  }
+
+  if (user.isLocked) {
+    throw ApiError.forbidden(
+      'ط§ظ„ط­ط³ط§ط¨ ظ…ط؛ظ„ظ‚. ظٹط±ط¬ظ‰ ط§ظ„طھظˆط§طµظ„ ظ…ط¹ ط§ظ„ظ…ط³ط¤ظˆظ„',
+      'AUTH_ACCOUNT_LOCKED'
+    );
+  }
+
+  const effective = await getUserEffectivePermissions(
+    req.user.id,
+    user.role,
+    user.extraPermissions || [],
+    user.deniedPermissions || []
+  );
+
+  req.userPermissions = effective;
+  return effective;
+};
+
 const authorizePermissions = (...requiredPermissions) => {
   return async (req, res, next) => {
     try {
-      if (!req.user) {
-        throw ApiError.unauthorized('يجب تسجيل الدخول أولاً', 'AUTH_UNAUTHORIZED');
-      }
-
-      const User = require('mongoose').model('User');
-      const user = await User.findById(req.user.id)
-        .select('role extraPermissions deniedPermissions isLocked isDeleted')
-        .lean();
-
-      if (!user || user.isDeleted) {
-        throw ApiError.notFound('المستخدم غير موجود', 'USER_NOT_FOUND');
-      }
-
-      if (user.isLocked) {
-        throw ApiError.forbidden(
-          'الحساب مغلق. يرجى التواصل مع المسؤول',
-          'AUTH_ACCOUNT_LOCKED'
-        );
-      }
-
-      const effective = await getUserEffectivePermissions(
-        req.user.id,
-        user.role,
-        user.extraPermissions || [],
-        user.deniedPermissions || []
-      );
-
-      req.userPermissions = effective;
+      const effective = await resolveRequestPermissions(req);
 
       const hasPermission = requiredPermissions.every((perm) => effective.includes(perm));
       if (!hasPermission) {
         throw ApiError.forbidden(
-          'ليس لديك صلاحية لتنفيذ هذا الإجراء',
+          'ظ„ظٹط³ ظ„ط¯ظٹظƒ طµظ„ط§ط­ظٹط© ظ„طھظ†ظپظٹط° ظ‡ط°ط§ ط§ظ„ط¥ط¬ط±ط§ط،',
           'PERMISSION_DENIED'
         );
       }
@@ -82,4 +87,24 @@ const authorizePermissions = (...requiredPermissions) => {
   };
 };
 
-module.exports = { authorizePermissions, getUserEffectivePermissions };
+const authorizeAnyPermissions = (...requiredPermissions) => {
+  return async (req, res, next) => {
+    try {
+      const effective = await resolveRequestPermissions(req);
+
+      const hasPermission = requiredPermissions.some((perm) => effective.includes(perm));
+      if (!hasPermission) {
+        throw ApiError.forbidden(
+          'ظ„ظٹط³ ظ„ط¯ظٹظƒ طµظ„ط§ط­ظٹط© ظ„طھظ†ظپظٹط° ظ‡ط°ط§ ط§ظ„ط¥ط¬ط±ط§ط،',
+          'PERMISSION_DENIED'
+        );
+      }
+
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+};
+
+module.exports = { authorizePermissions, authorizeAnyPermissions, getUserEffectivePermissions };
