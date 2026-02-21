@@ -351,10 +351,10 @@ const options = {
         },
       },
 
-      /* ══════════════════ المستخدمون ══════════════════ */
+      /* ══════════════════ الافراد ══════════════════ */
       '/users': {
         post: {
-          tags: ['المستخدمون'],
+          tags: ['الافراد'],
           summary: 'إنشاء مستخدم جديد',
           description: 'إنشاء ملف مستخدم جديد (مع أو بدون تسجيل دخول). تتطلب صلاحية USERS_CREATE.',
           security: [{ BearerAuth: [] }],
@@ -392,7 +392,7 @@ const options = {
           },
         },
         get: {
-          tags: ['المستخدمون'],
+          tags: ['الافراد'],
           summary: 'قائمة المستخدمين',
           description: 'جلب قائمة المستخدمين مع ترقيم المؤشر (Cursor Pagination) والفلترة. تتطلب صلاحية USERS_VIEW.',
           security: [{ BearerAuth: [] }],
@@ -441,7 +441,7 @@ const options = {
       },
       '/users/{id}': {
         get: {
-          tags: ['المستخدمون'],
+          tags: ['الافراد'],
           summary: 'جلب مستخدم بالمعرّف',
           description: 'جلب بيانات مستخدم محدد. تتطلب صلاحية USERS_VIEW.',
           security: [{ BearerAuth: [] }],
@@ -452,7 +452,7 @@ const options = {
           },
         },
         patch: {
-          tags: ['المستخدمون'],
+          tags: ['الافراد'],
           summary: 'تحديث بيانات مستخدم',
           description: 'تحديث بيانات مستخدم محدد. تتطلب صلاحية USERS_UPDATE. يتم تسجيل التغييرات في سجل المراجعة.',
           security: [{ BearerAuth: [] }],
@@ -485,7 +485,7 @@ const options = {
           },
         },
         delete: {
-          tags: ['المستخدمون'],
+          tags: ['الافراد'],
           summary: 'حذف مستخدم (ناعم)',
           description: 'حذف ناعم للمستخدم (يبقى في قاعدة البيانات مع علامة isDeleted). تتطلب صلاحية USERS_DELETE.',
           security: [{ BearerAuth: [] }],
@@ -498,7 +498,7 @@ const options = {
       },
       '/users/{id}/avatar': {
         post: {
-          tags: ['المستخدمون'],
+          tags: ['الافراد'],
           summary: 'رفع صورة شخصية',
           description: 'رفع أو تحديث الصورة الشخصية للمستخدم عبر Cloudinary. الأنواع المسموحة: JPEG, PNG, GIF, WEBP. الحد الأقصى: 5 ميجابايت. تتطلب صلاحية USERS_UPLOAD_AVATAR.',
           security: [{ BearerAuth: [] }],
@@ -547,7 +547,7 @@ const options = {
       },
       '/users/{id}/lock': {
         post: {
-          tags: ['المستخدمون'],
+          tags: ['الافراد'],
           summary: 'قفل حساب مستخدم',
           description: 'قفل حساب مستخدم مع تحديد السبب. تتطلب صلاحية USERS_LOCK.',
           security: [{ BearerAuth: [] }],
@@ -577,7 +577,7 @@ const options = {
       },
       '/users/{id}/unlock': {
         post: {
-          tags: ['المستخدمون'],
+          tags: ['الافراد'],
           summary: 'فتح حساب مستخدم',
           description: 'فتح حساب مستخدم مغلق. تتطلب صلاحية USERS_UNLOCK.',
           security: [{ BearerAuth: [] }],
@@ -589,7 +589,7 @@ const options = {
       },
       '/users/{id}/tags': {
         post: {
-          tags: ['المستخدمون'],
+          tags: ['الافراد'],
           summary: 'إدارة وسوم المستخدم',
           description: 'إضافة أو إزالة وسوم من المستخدم. تتطلب صلاحية USERS_TAGS_MANAGE.',
           security: [{ BearerAuth: [] }],
@@ -627,7 +627,7 @@ const options = {
       },
       '/users/{id}/family/link': {
         post: {
-          tags: ['المستخدمون'],
+          tags: ['الافراد'],
           summary: 'ربط فرد عائلة',
           description: 'ربط فرد عائلة بالمستخدم. يتم البحث عن الشخص المستهدف في قاعدة البيانات بالهاتف أو الرقم القومي أو الاسم+تاريخ الميلاد. إذا وُجد يتم الربط بالمعرّف، وإلا يُخزن الاسم فقط. تتطلب صلاحية USERS_FAMILY_LINK.',
           security: [{ BearerAuth: [] }],
@@ -662,7 +662,7 @@ const options = {
     },
     tags: [
       { name: 'المصادقة', description: 'عمليات تسجيل الدخول والخروج وإدارة الجلسات' },
-      { name: 'المستخدمون', description: 'إدارة المستخدمين: إنشاء، تعديل، حذف، قفل، وسوم، عائلة' },
+      { name: 'الافراد', description: 'إدارة المستخدمين: إنشاء، تعديل، حذف، قفل، وسوم، عائلة' },
     ],
   },
   apis: [],
