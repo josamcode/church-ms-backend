@@ -38,6 +38,10 @@ class MeetingsService {
     return Array.isArray(permissions) && permissions.includes(permission);
   }
 
+  _hasAnyPermission(permissions = [], requiredPermissions = []) {
+    return (requiredPermissions || []).some((permission) => this._hasPermission(permissions, permission));
+  }
+
   _buildOwnMeetingsFilter(actorUserId) {
     const actorObjectId = this._toObjectId(actorUserId, 'actorUserId');
     return {
@@ -142,7 +146,13 @@ class MeetingsService {
       };
     }
 
-    const canViewAll = this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_VIEW);
+    const canViewAll = this._hasAnyPermission(userPermissions, [
+      PERMISSIONS.MEETINGS_VIEW,
+      PERMISSIONS.MEETINGS_UPDATE,
+      PERMISSIONS.MEETINGS_SERVANTS_MANAGE,
+      PERMISSIONS.MEETINGS_COMMITTEES_MANAGE,
+      PERMISSIONS.MEETINGS_ACTIVITIES_MANAGE,
+    ]);
     if (canViewAll) {
       return {
         allowed: true,
@@ -930,7 +940,13 @@ class MeetingsService {
       isDeleted: { $ne: true },
     };
 
-    const hasFullViewPermission = this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_VIEW);
+    const hasFullViewPermission = this._hasAnyPermission(userPermissions, [
+      PERMISSIONS.MEETINGS_VIEW,
+      PERMISSIONS.MEETINGS_UPDATE,
+      PERMISSIONS.MEETINGS_SERVANTS_MANAGE,
+      PERMISSIONS.MEETINGS_COMMITTEES_MANAGE,
+      PERMISSIONS.MEETINGS_ACTIVITIES_MANAGE,
+    ]);
     if (actorUserId && !hasFullViewPermission) {
       Object.assign(query, this._buildOwnMeetingsFilter(actorUserId));
     }
