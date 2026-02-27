@@ -107,7 +107,7 @@ const updateMeetingMemberNotes = asyncHandler(async (req, res) => {
   const member = await meetingsService.updateMeetingMemberNotes(
     req.params.id,
     req.params.memberId,
-    req.body.notes,
+    req.body.note,
     {
       actorUserId: req.user.id,
       userPermissions: req.userPermissions || [],

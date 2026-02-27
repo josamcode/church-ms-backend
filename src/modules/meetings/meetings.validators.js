@@ -221,7 +221,7 @@ const servantHistory = {
 const updateMeetingMemberNotes = {
   params: memberParams.params,
   body: Joi.object({
-    notes: Joi.string().trim().max(1000).allow('', null).required(),
+    note: Joi.string().trim().max(1000).allow('', null).required(),
   }),
 };
 

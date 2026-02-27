@@ -159,6 +159,36 @@ const meetingActivitySchema = new mongoose.Schema(
   { _id: true }
 );
 
+const meetingMemberNoteSchema = new mongoose.Schema(
+  {
+    memberUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    note: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+      required: true,
+    },
+    addedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    updatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: true }
+);
+
 const meetingSchema = new mongoose.Schema(
   {
     sectorId: {
@@ -227,6 +257,10 @@ const meetingSchema = new mongoose.Schema(
     },
     activities: {
       type: [meetingActivitySchema],
+      default: [],
+    },
+    memberNotes: {
+      type: [meetingMemberNoteSchema],
       default: [],
     },
     notes: {
