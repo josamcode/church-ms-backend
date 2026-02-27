@@ -25,7 +25,7 @@ if (!redisEnabled) {
       maxRetriesPerRequest: 3,
       retryStrategy: (times) => {
         if (times > 10) {
-          logger.error('Redis: طھظ… طھط¬ط§ظˆط² ط§ظ„ط­ط¯ ط§ظ„ط£ظ‚طµظ‰ ظ„ظ…ط­ط§ظˆظ„ط§طھ ط¥ط¹ط§ط¯ط© ط§ظ„ط§طھطµط§ظ„');
+          logger.error('Redis: تم تجاوز الحد الأقصى لمحاولات إعادة الاتصال');
           return null;
         }
         return Math.min(times * 200, 2000);
@@ -37,17 +37,17 @@ if (!redisEnabled) {
     redisClient = config.redis.url
       ? new Redis(config.redis.url, options)
       : new Redis({
-          host: config.redis.host,
-          port: config.redis.port,
-          ...options,
-        });
+        host: config.redis.host,
+        port: config.redis.port,
+        ...options,
+      });
 
-    redisClient.on('connect', () => logger.info('Redis ظ…طھطµظ„'));
-    redisClient.on('error', (err) => logger.error(`ط®ط·ط£ Redis: ${err.message}`));
-    redisClient.on('close', () => logger.warn('Redis: طھظ… ط¥ط؛ظ„ط§ظ‚ ط§ظ„ط§طھطµط§ظ„'));
-    redisClient.on('reconnecting', () => logger.info('Redis: ط¥ط¹ط§ط¯ط© ط§ظ„ط§طھطµط§ظ„...'));
+    redisClient.on('connect', () => logger.info('Redis متصل'));
+    redisClient.on('error', (err) => logger.error(`خطأ Redis: ${err.message}`));
+    redisClient.on('close', () => logger.warn('Redis: تم إغلاق الاتصال'));
+    redisClient.on('reconnecting', () => logger.info('Redis: إعادة الاتصال...'));
   } catch (err) {
-    logger.error(`ظپط´ظ„ ط¥ظ†ط´ط§ط، ط§طھطµط§ظ„ Redis: ${err.message}`);
+    logger.error(`فشل إنشاء اتصال Redis: ${err.message}`);
     redisClient = createFallbackClient();
   }
 }

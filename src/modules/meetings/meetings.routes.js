@@ -100,15 +100,39 @@ router.post(
 router.get(
   '/',
   authenticateJWT,
-  authorizePermissions(PERMISSIONS.MEETINGS_VIEW),
+  authorizeAnyPermissions(PERMISSIONS.MEETINGS_VIEW, PERMISSIONS.MEETINGS_VIEW_OWN),
   validate(meetingsValidators.listMeetings),
   meetingsController.listMeetings
 );
 
 router.get(
+  '/:id/members/:memberId',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.MEETINGS_VIEW,
+    PERMISSIONS.MEETINGS_VIEW_OWN,
+    PERMISSIONS.MEETINGS_MEMBERS_VIEW
+  ),
+  validate(meetingsValidators.memberParams),
+  meetingsController.getMeetingMemberById
+);
+
+router.patch(
+  '/:id/members/:memberId/notes',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.MEETINGS_UPDATE,
+    PERMISSIONS.MEETINGS_SERVANTS_MANAGE,
+    PERMISSIONS.MEETINGS_MEMBERS_NOTES_UPDATE
+  ),
+  validate(meetingsValidators.updateMeetingMemberNotes),
+  meetingsController.updateMeetingMemberNotes
+);
+
+router.get(
   '/:id',
   authenticateJWT,
-  authorizePermissions(PERMISSIONS.MEETINGS_VIEW),
+  authorizeAnyPermissions(PERMISSIONS.MEETINGS_VIEW, PERMISSIONS.MEETINGS_VIEW_OWN),
   validate(meetingsValidators.idParam),
   meetingsController.getMeetingById
 );

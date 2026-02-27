@@ -64,6 +64,8 @@ const listMeetings = asyncHandler(async (req, res) => {
     cursor,
     limit: parseInt(limit, 10) || 20,
     order: order || 'desc',
+    actorUserId: req.user.id,
+    userPermissions: req.userPermissions || [],
     filters: {
       sectorId,
       day,
@@ -79,10 +81,42 @@ const listMeetings = asyncHandler(async (req, res) => {
 });
 
 const getMeetingById = asyncHandler(async (req, res) => {
-  const meeting = await meetingsService.getMeetingById(req.params.id);
+  const meeting = await meetingsService.getMeetingById(req.params.id, {
+    actorUserId: req.user.id,
+    userPermissions: req.userPermissions || [],
+  });
   return ApiResponse.success(res, {
     message: 'Meeting loaded successfully',
     data: meeting,
+  });
+});
+
+const getMeetingMemberById = asyncHandler(async (req, res) => {
+  const member = await meetingsService.getMeetingMemberById(req.params.id, req.params.memberId, {
+    actorUserId: req.user.id,
+    userPermissions: req.userPermissions || [],
+  });
+
+  return ApiResponse.success(res, {
+    message: 'Meeting member loaded successfully',
+    data: member,
+  });
+});
+
+const updateMeetingMemberNotes = asyncHandler(async (req, res) => {
+  const member = await meetingsService.updateMeetingMemberNotes(
+    req.params.id,
+    req.params.memberId,
+    req.body.notes,
+    {
+      actorUserId: req.user.id,
+      userPermissions: req.userPermissions || [],
+    }
+  );
+
+  return ApiResponse.success(res, {
+    message: 'Meeting member notes updated successfully',
+    data: member,
   });
 });
 
@@ -193,4 +227,6 @@ module.exports = {
   deleteMeeting,
   listResponsibilitySuggestions,
   getServantHistory,
+  getMeetingMemberById,
+  updateMeetingMemberNotes,
 };
