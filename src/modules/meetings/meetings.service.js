@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
 const { buildPaginationMeta } = require('../../utils/pagination');
+const { PERMISSIONS } = require('../../constants/permissions');
 const cloudinary = require('../../config/cloudinary');
 const config = require('../../config/env');
 const logger = require('../../utils/logger');
@@ -31,6 +32,147 @@ class MeetingsService {
 
   _normalizeUniqueStrings(values = []) {
     return [...new Set(values.map((entry) => this._normalizeText(entry)).filter(Boolean))];
+  }
+
+  _hasPermission(permissions = [], permission) {
+    return Array.isArray(permissions) && permissions.includes(permission);
+  }
+
+  _buildOwnMeetingsFilter(actorUserId) {
+    const actorObjectId = this._toObjectId(actorUserId, 'actorUserId');
+    return {
+      $or: [
+        { 'serviceSecretary.userId': actorObjectId },
+        { 'assistantSecretaries.userId': actorObjectId },
+        { 'servants.userId': actorObjectId },
+      ],
+    };
+  }
+
+  _isMeetingLeadershipUser(meeting, actorUserId) {
+    const actorId = this._toId(actorUserId);
+    if (!actorId || !meeting) return false;
+
+    const serviceSecretaryUserId = this._toId(meeting.serviceSecretary?.userId);
+    if (serviceSecretaryUserId && serviceSecretaryUserId === actorId) {
+      return true;
+    }
+
+    return (meeting.assistantSecretaries || []).some((assistant) => {
+      const assistantUserId = this._toId(assistant?.userId);
+      return assistantUserId && assistantUserId === actorId;
+    });
+  }
+
+  _findMeetingServantEntry(meeting, actorUserId) {
+    const actorId = this._toId(actorUserId);
+    if (!actorId || !meeting) return null;
+
+    return (
+      (meeting.servants || []).find((servant) => {
+        const servantUserId = this._toId(servant?.userId);
+        return servantUserId && servantUserId === actorId;
+      }) || null
+    );
+  }
+
+  _collectAllMeetingMemberIds(meeting) {
+    if (!meeting) return new Set();
+
+    const ids = new Set();
+    const push = (value) => {
+      const id = this._toId(value);
+      if (id && mongoose.Types.ObjectId.isValid(id)) {
+        ids.add(id);
+      }
+    };
+
+    (meeting.servedUserIds || []).forEach((servedId) => push(servedId));
+    (meeting.groupAssignments || []).forEach((assignment) => {
+      (assignment.servedUserIds || []).forEach((servedId) => push(servedId));
+    });
+    (meeting.servants || []).forEach((servant) => {
+      (servant.servedUserIds || []).forEach((servedId) => push(servedId));
+      (servant.groupAssignments || []).forEach((assignment) => {
+        (assignment.servedUserIds || []).forEach((servedId) => push(servedId));
+      });
+    });
+
+    return ids;
+  }
+
+  _getServantScope(meeting, servantEntry) {
+    const groupNames = new Set(
+      this._normalizeUniqueStrings([
+        ...(servantEntry?.groupsManaged || []),
+        ...((servantEntry?.groupAssignments || []).map((entry) => entry?.group)),
+      ])
+    );
+
+    const scopedMemberIds = new Set();
+    const push = (value) => {
+      const id = this._toId(value);
+      if (id && mongoose.Types.ObjectId.isValid(id)) {
+        scopedMemberIds.add(id);
+      }
+    };
+
+    (servantEntry?.servedUserIds || []).forEach((servedId) => push(servedId));
+    (servantEntry?.groupAssignments || []).forEach((assignment) => {
+      (assignment?.servedUserIds || []).forEach((servedId) => push(servedId));
+    });
+
+    if (groupNames.size > 0) {
+      (meeting?.groupAssignments || []).forEach((assignment) => {
+        if (!groupNames.has(assignment?.group)) return;
+        (assignment?.servedUserIds || []).forEach((servedId) => push(servedId));
+      });
+    }
+
+    return { groupNames, scopedMemberIds };
+  }
+
+  _resolveMeetingAccess({ meeting, actorUserId, userPermissions = [] }) {
+    if (!actorUserId) {
+      return {
+        allowed: true,
+        accessLevel: 'full',
+        isLeadership: true,
+        servantEntry: null,
+      };
+    }
+
+    const canViewAll = this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_VIEW);
+    if (canViewAll) {
+      return {
+        allowed: true,
+        accessLevel: 'full',
+        isLeadership: true,
+        servantEntry: this._findMeetingServantEntry(meeting, actorUserId),
+      };
+    }
+
+    const canViewOwn =
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_VIEW_OWN) ||
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_MEMBERS_VIEW) ||
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_MEMBERS_NOTES_UPDATE);
+
+    if (!canViewOwn) {
+      return { allowed: false };
+    }
+
+    const isLeadership = this._isMeetingLeadershipUser(meeting, actorUserId);
+    const servantEntry = this._findMeetingServantEntry(meeting, actorUserId);
+    if (!isLeadership && !servantEntry) {
+      return { allowed: false };
+    }
+
+    return {
+      allowed: true,
+      accessLevel: isLeadership ? 'full' : 'servant',
+      isLeadership,
+      servantEntry,
+    };
   }
 
   _extractPayloadUserIds(payload = {}) {
@@ -341,6 +483,97 @@ class MeetingsService {
       notes: meeting.notes || '',
       createdAt: meeting.createdAt,
       updatedAt: meeting.updatedAt,
+    };
+  }
+
+  _mapMeetingForServant(meeting, servantEntry) {
+    const mappedMeeting = this._mapMeeting(meeting);
+    const { groupNames, scopedMemberIds } = this._getServantScope(meeting, servantEntry);
+
+    const filterUsers = (users = [], groupName) => {
+      if (scopedMemberIds.size === 0) {
+        return users;
+      }
+
+      const filtered = (users || []).filter((user) => {
+        const id = this._toId(user?.id || user?._id);
+        return id && scopedMemberIds.has(id);
+      });
+
+      if (filtered.length > 0) return filtered;
+      if (groupName && groupNames.has(groupName)) return users;
+      return [];
+    };
+
+    const groupAssignments = (mappedMeeting.groupAssignments || [])
+      .map((assignment) => ({
+        ...assignment,
+        servedUsers: filterUsers(assignment.servedUsers || [], assignment.group),
+      }))
+      .filter((assignment) => {
+        if (groupNames.has(assignment.group)) return true;
+        return (assignment.servedUsers || []).length > 0;
+      });
+
+    const visibleGroups = this._normalizeUniqueStrings(groupAssignments.map((entry) => entry.group));
+    const servantId = this._toId(servantEntry?._id);
+    const ownServant =
+      (mappedMeeting.servants || []).find((servant) => this._toId(servant.id) === servantId) || null;
+
+    const ownServantAssignments = (ownServant?.groupAssignments || [])
+      .map((assignment) => ({
+        ...assignment,
+        servedUsers: filterUsers(assignment.servedUsers || [], assignment.group),
+      }))
+      .filter((assignment) => {
+        if (groupNames.has(assignment.group)) return true;
+        return (assignment.servedUsers || []).length > 0;
+      });
+
+    const ownServantGroups = this._normalizeUniqueStrings(
+      (ownServant?.groupsManaged || []).filter((groupName) => visibleGroups.includes(groupName))
+    );
+
+    const ownServantServedUsers = filterUsers(ownServant?.servedUsers || []);
+
+    return {
+      ...mappedMeeting,
+      servedUsers: [],
+      groups: visibleGroups,
+      groupAssignments,
+      servants: ownServant
+        ? [
+            {
+              ...ownServant,
+              groupsManaged: ownServantGroups,
+              groupAssignments: ownServantAssignments,
+              servedUsers: ownServantServedUsers,
+            },
+          ]
+        : [],
+      committees: [],
+      activities: [],
+      viewerContext: {
+        accessLevel: 'servant',
+        canViewAllDetails: false,
+        canViewAllServedUsers: false,
+      },
+    };
+  }
+
+  _mapMeetingByAccess(meeting, accessContext) {
+    if (accessContext?.accessLevel === 'servant') {
+      return this._mapMeetingForServant(meeting, accessContext.servantEntry);
+    }
+
+    const mappedMeeting = this._mapMeeting(meeting);
+    return {
+      ...mappedMeeting,
+      viewerContext: {
+        accessLevel: 'full',
+        canViewAllDetails: true,
+        canViewAllServedUsers: true,
+      },
     };
   }
 
@@ -685,10 +918,22 @@ class MeetingsService {
     return this.getMeetingById(meeting._id);
   }
 
-  async listMeetings({ cursor, limit = 20, order = 'desc', filters = {} }) {
+  async listMeetings({
+    cursor,
+    limit = 20,
+    order = 'desc',
+    filters = {},
+    actorUserId = null,
+    userPermissions = [],
+  }) {
     const query = {
       isDeleted: { $ne: true },
     };
+
+    const hasFullViewPermission = this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_VIEW);
+    if (actorUserId && !hasFullViewPermission) {
+      Object.assign(query, this._buildOwnMeetingsFilter(actorUserId));
+    }
 
     if (filters.sectorId) {
       query.sectorId = this._toObjectId(filters.sectorId, 'sectorId');
@@ -727,13 +972,25 @@ class MeetingsService {
       .populate('committees.memberUserIds', 'fullName phonePrimary')
       .lean();
 
+    const mappedMeetings = meetings
+      .map((meeting) => {
+        const accessContext = this._resolveMeetingAccess({
+          meeting,
+          actorUserId,
+          userPermissions,
+        });
+        if (!accessContext.allowed) return null;
+        return this._mapMeetingByAccess(meeting, accessContext);
+      })
+      .filter(Boolean);
+
     return {
-      meetings: meetings.map((meeting) => this._mapMeeting(meeting)),
-      meta: buildPaginationMeta(meetings, limit, 'createdAt'),
+      meetings: mappedMeetings,
+      meta: buildPaginationMeta(mappedMeetings, limit, 'createdAt'),
     };
   }
 
-  async getMeetingById(id) {
+  async getMeetingById(id, { actorUserId = null, userPermissions = [] } = {}) {
     const meeting = await Meeting.findOne({ _id: this._toObjectId(id), isDeleted: { $ne: true } })
       .populate('sectorId', 'name avatar')
       .populate('serviceSecretary.userId', 'fullName phonePrimary')
@@ -750,7 +1007,170 @@ class MeetingsService {
       throw ApiError.notFound('Meeting was not found', 'RESOURCE_NOT_FOUND');
     }
 
-    return this._mapMeeting(meeting);
+    const accessContext = this._resolveMeetingAccess({
+      meeting,
+      actorUserId,
+      userPermissions,
+    });
+    if (!accessContext.allowed) {
+      throw ApiError.forbidden('You are not allowed to access this meeting', 'PERMISSION_DENIED');
+    }
+
+    return this._mapMeetingByAccess(meeting, accessContext);
+  }
+
+  _mapMeetingMember({ user, meetingId, meetingName, groupNames = [], canEditNotes = false }) {
+    return {
+      id: this._toId(user._id),
+      fullName: user.fullName || '',
+      phonePrimary: user.phonePrimary || '',
+      notes: user.notes || '',
+      groups: this._normalizeUniqueStrings(groupNames),
+      meeting: {
+        id: this._toId(meetingId),
+        name: meetingName || '',
+      },
+      canEditNotes: Boolean(canEditNotes),
+    };
+  }
+
+  async _getMeetingForMemberAccess(meetingId) {
+    const meeting = await Meeting.findOne({ _id: this._toObjectId(meetingId), isDeleted: { $ne: true } })
+      .select('name serviceSecretary assistantSecretaries servants servedUserIds groupAssignments')
+      .lean();
+
+    if (!meeting) {
+      throw ApiError.notFound('Meeting was not found', 'RESOURCE_NOT_FOUND');
+    }
+
+    return meeting;
+  }
+
+  _resolveScopedMemberIds(meeting, accessContext) {
+    if (accessContext?.accessLevel === 'servant') {
+      return this._getServantScope(meeting, accessContext.servantEntry).scopedMemberIds;
+    }
+    return this._collectAllMeetingMemberIds(meeting);
+  }
+
+  _resolveMemberGroups(meeting, memberId, accessContext) {
+    const normalizedMemberId = this._toId(memberId);
+    if (!normalizedMemberId) return [];
+
+    const servantScope =
+      accessContext?.accessLevel === 'servant'
+        ? this._getServantScope(meeting, accessContext.servantEntry)
+        : null;
+
+    return (meeting.groupAssignments || [])
+      .filter((assignment) => {
+        const inGroup = (assignment.servedUserIds || []).some(
+          (servedId) => this._toId(servedId) === normalizedMemberId
+        );
+        if (!inGroup) return false;
+        if (!servantScope) return true;
+        if (servantScope.groupNames.has(assignment.group)) return true;
+        return servantScope.scopedMemberIds.has(normalizedMemberId);
+      })
+      .map((assignment) => assignment.group);
+  }
+
+  _canUpdateMemberNotes(userPermissions = []) {
+    return (
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_MEMBERS_NOTES_UPDATE) ||
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_UPDATE) ||
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_SERVANTS_MANAGE)
+    );
+  }
+
+  async getMeetingMemberById(meetingId, memberId, { actorUserId, userPermissions = [] } = {}) {
+    const meeting = await this._getMeetingForMemberAccess(meetingId);
+    const accessContext = this._resolveMeetingAccess({
+      meeting,
+      actorUserId,
+      userPermissions,
+    });
+
+    if (!accessContext.allowed) {
+      throw ApiError.forbidden('You are not allowed to access this meeting', 'PERMISSION_DENIED');
+    }
+
+    const scopedMemberIds = this._resolveScopedMemberIds(meeting, accessContext);
+    const normalizedMemberId = this._toId(memberId);
+    if (!normalizedMemberId || !scopedMemberIds.has(normalizedMemberId)) {
+      throw ApiError.forbidden('You are not allowed to access this member', 'PERMISSION_DENIED');
+    }
+
+    const user = await User.findOne({
+      _id: this._toObjectId(memberId, 'memberId'),
+      isDeleted: { $ne: true },
+    })
+      .select('fullName phonePrimary notes')
+      .lean();
+
+    if (!user) {
+      throw ApiError.notFound('Meeting member was not found', 'RESOURCE_NOT_FOUND');
+    }
+
+    return this._mapMeetingMember({
+      user,
+      meetingId: meeting._id,
+      meetingName: meeting.name,
+      groupNames: this._resolveMemberGroups(meeting, memberId, accessContext),
+      canEditNotes: this._canUpdateMemberNotes(userPermissions),
+    });
+  }
+
+  async updateMeetingMemberNotes(
+    meetingId,
+    memberId,
+    notes,
+    { actorUserId, userPermissions = [] } = {}
+  ) {
+    if (!this._canUpdateMemberNotes(userPermissions)) {
+      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+    }
+
+    const meeting = await this._getMeetingForMemberAccess(meetingId);
+    const accessContext = this._resolveMeetingAccess({
+      meeting,
+      actorUserId,
+      userPermissions,
+    });
+
+    if (!accessContext.allowed) {
+      throw ApiError.forbidden('You are not allowed to access this meeting', 'PERMISSION_DENIED');
+    }
+
+    const scopedMemberIds = this._resolveScopedMemberIds(meeting, accessContext);
+    const normalizedMemberId = this._toId(memberId);
+    if (!normalizedMemberId || !scopedMemberIds.has(normalizedMemberId)) {
+      throw ApiError.forbidden('You are not allowed to update this member', 'PERMISSION_DENIED');
+    }
+
+    const nextNotes = this._normalizeText(notes);
+    const updateDoc = nextNotes
+      ? { $set: { notes: nextNotes } }
+      : { $unset: { notes: 1 } };
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: this._toObjectId(memberId, 'memberId'), isDeleted: { $ne: true } },
+      updateDoc,
+      { new: true, runValidators: true }
+    )
+      .select('fullName phonePrimary notes')
+      .lean();
+
+    if (!updatedUser) {
+      throw ApiError.notFound('Meeting member was not found', 'RESOURCE_NOT_FOUND');
+    }
+
+    return this._mapMeetingMember({
+      user: updatedUser,
+      meetingId: meeting._id,
+      meetingName: meeting.name,
+      groupNames: this._resolveMemberGroups(meeting, memberId, accessContext),
+      canEditNotes: true,
+    });
   }
 
   async updateMeetingBasic(id, payload, actorUserId) {

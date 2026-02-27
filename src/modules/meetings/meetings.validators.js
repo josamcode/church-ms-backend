@@ -71,6 +71,19 @@ const idParam = {
   }),
 };
 
+const memberParams = {
+  params: Joi.object({
+    id: objectIdField.required().messages({
+      'string.pattern.base': 'Invalid id',
+      'any.required': 'Id is required',
+    }),
+    memberId: objectIdField.required().messages({
+      'string.pattern.base': 'Invalid member id',
+      'any.required': 'Member id is required',
+    }),
+  }),
+};
+
 const createSector = {
   body: Joi.object({
     name: Joi.string().trim().min(2).max(160).required().messages({
@@ -205,8 +218,16 @@ const servantHistory = {
     .messages({ 'object.missing': 'Provide userId or name' }),
 };
 
+const updateMeetingMemberNotes = {
+  params: memberParams.params,
+  body: Joi.object({
+    notes: Joi.string().trim().max(1000).allow('', null).required(),
+  }),
+};
+
 module.exports = {
   idParam,
+  memberParams,
   createSector,
   updateSector,
   listSectors,
@@ -218,4 +239,5 @@ module.exports = {
   updateMeetingActivities,
   responsibilitySuggestions,
   servantHistory,
+  updateMeetingMemberNotes,
 };

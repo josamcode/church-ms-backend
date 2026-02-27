@@ -16,11 +16,11 @@ const getUserEffectivePermissions = async (userId, role, extraPermissions = [], 
     role === ROLES.SUPER_ADMIN
       ? [...PERMISSIONS_ARRAY]
       : (() => {
-          const rolePerms = ROLE_PERMISSIONS[role] || [];
-          const effectiveSet = new Set([...rolePerms, ...extraPermissions]);
-          deniedPermissions.forEach((p) => effectiveSet.delete(p));
-          return [...effectiveSet];
-        })();
+        const rolePerms = ROLE_PERMISSIONS[role] || [];
+        const effectiveSet = new Set([...rolePerms, ...extraPermissions]);
+        deniedPermissions.forEach((p) => effectiveSet.delete(p));
+        return [...effectiveSet];
+      })();
 
   try {
     await redisClient.setex(
@@ -37,7 +37,7 @@ const getUserEffectivePermissions = async (userId, role, extraPermissions = [], 
 
 const resolveRequestPermissions = async (req) => {
   if (!req.user) {
-    throw ApiError.unauthorized('ظٹط¬ط¨ طھط³ط¬ظٹظ„ ط§ظ„ط¯ط®ظˆظ„ ط£ظˆظ„ط§ظ‹', 'AUTH_UNAUTHORIZED');
+    throw ApiError.unauthorized('يجب تسجيل الدخول أولاً', 'AUTH_UNAUTHORIZED');
   }
 
   const User = require('mongoose').model('User');
@@ -46,12 +46,12 @@ const resolveRequestPermissions = async (req) => {
     .lean();
 
   if (!user || user.isDeleted) {
-    throw ApiError.notFound('ط§ظ„ظ…ط³طھط®ط¯ظ… ط؛ظٹط± ظ…ظˆط¬ظˆط¯', 'USER_NOT_FOUND');
+    throw ApiError.notFound('المستخدم غير موجود', 'USER_NOT_FOUND');
   }
 
   if (user.isLocked) {
     throw ApiError.forbidden(
-      'ط§ظ„ط­ط³ط§ط¨ ظ…ط؛ظ„ظ‚. ظٹط±ط¬ظ‰ ط§ظ„طھظˆط§طµظ„ ظ…ط¹ ط§ظ„ظ…ط³ط¤ظˆظ„',
+      'الحساب مغلق. يرجى التواصل مع المسؤول',
       'AUTH_ACCOUNT_LOCKED'
     );
   }
@@ -75,7 +75,7 @@ const authorizePermissions = (...requiredPermissions) => {
       const hasPermission = requiredPermissions.every((perm) => effective.includes(perm));
       if (!hasPermission) {
         throw ApiError.forbidden(
-          'ظ„ظٹط³ ظ„ط¯ظٹظƒ طµظ„ط§ط­ظٹط© ظ„طھظ†ظپظٹط° ظ‡ط°ط§ ط§ظ„ط¥ط¬ط±ط§ط،',
+          'ليس لديك صلاحية لتنفيذ هذا الإجراء',
           'PERMISSION_DENIED'
         );
       }
@@ -95,7 +95,7 @@ const authorizeAnyPermissions = (...requiredPermissions) => {
       const hasPermission = requiredPermissions.some((perm) => effective.includes(perm));
       if (!hasPermission) {
         throw ApiError.forbidden(
-          'ظ„ظٹط³ ظ„ط¯ظٹظƒ طµظ„ط§ط­ظٹط© ظ„طھظ†ظپظٹط° ظ‡ط°ط§ ط§ظ„ط¥ط¬ط±ط§ط،',
+          'ليس لديك صلاحية لتنفيذ هذا الإجراء',
           'PERMISSION_DENIED'
         );
       }
