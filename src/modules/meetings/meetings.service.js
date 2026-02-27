@@ -1223,16 +1223,24 @@ class MeetingsService {
     meetingId,
     meetingName,
     groupNames = [],
-    note = '',
-    noteMeta = null,
+    noteHistory = [],
     canEditNote = false,
   }) {
+    const latestNote = (noteHistory || [])[0] || null;
     return {
       id: this._toId(user._id),
       fullName: user.fullName || '',
       phonePrimary: user.phonePrimary || '',
-      note: note || '',
-      noteMeta: noteMeta || null,
+      note: latestNote?.note || '',
+      noteMeta: latestNote
+        ? {
+            id: latestNote.id,
+            addedBy: latestNote.addedBy?.id || null,
+            updatedBy: latestNote.updatedBy?.id || latestNote.addedBy?.id || null,
+            updatedAt: latestNote.updatedAt || null,
+          }
+        : null,
+      notes: noteHistory || [],
       groups: this._normalizeUniqueStrings(groupNames),
       meeting: {
         id: this._toId(meetingId),
@@ -1311,15 +1319,64 @@ class MeetingsService {
     );
   }
 
-  _extractMeetingMemberNote(meeting, memberId) {
+  _extractMeetingMemberNotes(meeting, memberId) {
     const normalizedMemberId = this._toId(memberId);
-    if (!normalizedMemberId) return null;
+    if (!normalizedMemberId) return [];
 
-    return (
-      (meeting?.memberNotes || []).find(
-        (entry) => this._toId(entry?.memberUserId) === normalizedMemberId
-      ) || null
-    );
+    return (meeting?.memberNotes || [])
+      .filter((entry) => this._toId(entry?.memberUserId) === normalizedMemberId)
+      .sort((a, b) => {
+        const aTime = new Date(a?.updatedAt || 0).getTime();
+        const bTime = new Date(b?.updatedAt || 0).getTime();
+        return bTime - aTime;
+      });
+  }
+
+  async _buildMeetingNoteUsersMap(noteEntries = []) {
+    const userIds = [...new Set(
+      (noteEntries || [])
+        .flatMap((entry) => [entry?.addedBy, entry?.updatedBy])
+        .map((value) => this._toId(value))
+        .filter(Boolean)
+    )];
+
+    if (!userIds.length) return new Map();
+
+    const users = await User.find({
+      _id: { $in: userIds },
+      isDeleted: { $ne: true },
+    })
+      .select('fullName')
+      .lean();
+
+    return new Map(users.map((user) => [this._toId(user._id), user]));
+  }
+
+  _mapMeetingMemberNotes(noteEntries = [], noteUsersMap = new Map()) {
+    return (noteEntries || []).map((entry) => {
+      const addedById = this._toId(entry?.addedBy);
+      const updatedById = this._toId(entry?.updatedBy || entry?.addedBy);
+      const addedByUser = addedById ? noteUsersMap.get(addedById) : null;
+      const updatedByUser = updatedById ? noteUsersMap.get(updatedById) : null;
+
+      return {
+        id: this._toId(entry?._id),
+        note: entry?.note || '',
+        addedBy: addedById
+          ? {
+              id: addedById,
+              fullName: addedByUser?.fullName || '',
+            }
+          : null,
+        updatedBy: updatedById
+          ? {
+              id: updatedById,
+              fullName: updatedByUser?.fullName || '',
+            }
+          : null,
+        updatedAt: entry?.updatedAt || null,
+      };
+    });
   }
 
   async getMeetingMemberById(meetingId, memberId, { actorUserId, userPermissions = [] } = {}) {
@@ -1354,22 +1411,16 @@ class MeetingsService {
       throw ApiError.notFound('Meeting member was not found', 'RESOURCE_NOT_FOUND');
     }
 
-    const noteEntry = this._extractMeetingMemberNote(meeting, memberId);
+    const noteEntries = this._extractMeetingMemberNotes(meeting, memberId);
+    const noteUsersMap = await this._buildMeetingNoteUsersMap(noteEntries);
+    const noteHistory = this._mapMeetingMemberNotes(noteEntries, noteUsersMap);
 
     return this._mapMeetingMember({
       user,
       meetingId: meeting._id,
       meetingName: meeting.name,
       groupNames: this._resolveMemberGroups(meeting, memberId, accessContext),
-      note: noteEntry?.note || '',
-      noteMeta: noteEntry
-        ? {
-            id: this._toId(noteEntry._id),
-            addedBy: this._toId(noteEntry.addedBy),
-            updatedBy: this._toId(noteEntry.updatedBy || noteEntry.addedBy),
-            updatedAt: noteEntry.updatedAt || null,
-          }
-        : null,
+      noteHistory,
       canEditNote:
         this._canUpdateMeetingMemberNote(userPermissions) && accessContext.accessLevel !== 'member',
     });
@@ -1417,52 +1468,32 @@ class MeetingsService {
     }
 
     const nextNote = this._normalizeText(note);
-    const actorId = this._toObjectId(actorUserId, 'actorUserId');
-
-    const existingIndex = (meeting.memberNotes || []).findIndex(
-      (entry) => this._toId(entry?.memberUserId) === normalizedMemberId
-    );
-
-    if (nextNote) {
-      if (existingIndex >= 0) {
-        const targetEntry = meeting.memberNotes[existingIndex];
-        targetEntry.note = nextNote;
-        if (!targetEntry.addedBy) targetEntry.addedBy = actorId;
-        targetEntry.updatedBy = actorId;
-        targetEntry.updatedAt = new Date();
-      } else {
-        meeting.memberNotes.push({
-          memberUserId: this._toObjectId(memberId, 'memberId'),
-          note: nextNote,
-          addedBy: actorId,
-          updatedBy: actorId,
-          updatedAt: new Date(),
-        });
-      }
-    } else if (existingIndex >= 0) {
-      meeting.memberNotes.splice(existingIndex, 1);
+    if (!nextNote) {
+      throw ApiError.badRequest('Note is required', 'VALIDATION_ERROR');
     }
+    const actorId = this._toObjectId(actorUserId, 'actorUserId');
+    meeting.memberNotes.push({
+      memberUserId: this._toObjectId(memberId, 'memberId'),
+      note: nextNote,
+      addedBy: actorId,
+      updatedBy: actorId,
+      updatedAt: new Date(),
+    });
 
     meeting.updatedBy = actorId;
     await meeting.save();
 
     const updatedMeeting = await this._getMeetingForMemberAccess(meetingId);
-    const noteEntry = this._extractMeetingMemberNote(updatedMeeting, memberId);
+    const noteEntries = this._extractMeetingMemberNotes(updatedMeeting, memberId);
+    const noteUsersMap = await this._buildMeetingNoteUsersMap(noteEntries);
+    const noteHistory = this._mapMeetingMemberNotes(noteEntries, noteUsersMap);
 
     return this._mapMeetingMember({
       user,
       meetingId: updatedMeeting._id,
       meetingName: updatedMeeting.name,
       groupNames: this._resolveMemberGroups(updatedMeeting, memberId, accessContext),
-      note: noteEntry?.note || '',
-      noteMeta: noteEntry
-        ? {
-            id: this._toId(noteEntry._id),
-            addedBy: this._toId(noteEntry.addedBy),
-            updatedBy: this._toId(noteEntry.updatedBy || noteEntry.addedBy),
-            updatedAt: noteEntry.updatedAt || null,
-          }
-        : null,
+      noteHistory,
       canEditNote: true,
     });
   }
