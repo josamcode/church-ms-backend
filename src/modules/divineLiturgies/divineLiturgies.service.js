@@ -72,10 +72,20 @@ class DivineLiturgiesService {
   _mapUser(userLike) {
     const id = this._toId(userLike);
     if (!id) return null;
+
+    const avatar =
+      userLike?.avatar && typeof userLike.avatar === 'object' && userLike.avatar.url
+        ? {
+            url: userLike.avatar.url,
+            publicId: userLike.avatar.publicId || null,
+          }
+        : null;
+
     return {
       id,
       fullName: userLike?.fullName || null,
       phonePrimary: userLike?.phonePrimary || null,
+      avatar,
     };
   }
 
@@ -83,7 +93,7 @@ class DivineLiturgiesService {
     const user = priest?.userId && typeof priest.userId === 'object'
       ? this._mapUser(priest.userId)
       : priest?.userId
-        ? { id: this._toId(priest.userId), fullName: null, phonePrimary: null }
+        ? { id: this._toId(priest.userId), fullName: null, phonePrimary: null, avatar: null }
         : null;
 
     return {
@@ -196,13 +206,13 @@ class DivineLiturgiesService {
 
   async _loadRecurringById(id) {
     return DivineLiturgyRecurring.findById(id)
-      .populate('priestUserIds', 'fullName phonePrimary')
+      .populate('priestUserIds', 'fullName phonePrimary avatar')
       .lean();
   }
 
   async _loadExceptionById(id) {
     return DivineLiturgyException.findById(id)
-      .populate('priestUserIds', 'fullName phonePrimary')
+      .populate('priestUserIds', 'fullName phonePrimary avatar')
       .lean();
   }
 
@@ -210,13 +220,13 @@ class DivineLiturgiesService {
     const [priests, recurring, exceptions] = await Promise.all([
       ChurchPriest.find({})
         .sort({ createdAt: 1, _id: 1 })
-        .populate('userId', 'fullName phonePrimary')
+        .populate('userId', 'fullName phonePrimary avatar')
         .lean(),
       DivineLiturgyRecurring.find({})
-        .populate('priestUserIds', 'fullName phonePrimary')
+        .populate('priestUserIds', 'fullName phonePrimary avatar')
         .lean(),
       DivineLiturgyException.find({})
-        .populate('priestUserIds', 'fullName phonePrimary')
+        .populate('priestUserIds', 'fullName phonePrimary avatar')
         .lean(),
     ]);
 
