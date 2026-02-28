@@ -346,7 +346,7 @@ class UserService {
     const allowedFields = [
       'fullName', 'gender', 'birthDate', 'nationalId', 'notes',
       'phonePrimary', 'phoneSecondary', 'whatsappNumber', 'email',
-      'address', 'tags', 'familyName', 'houseName', 'role', 'extraPermissions',
+      'address', 'tags', 'familyName', 'houseName', 'role', 'hasLogin', 'extraPermissions',
       'deniedPermissions', 'confessionFatherName', 'confessionFatherUserId',
       'avatar', 'customDetails',
       'father', 'mother', 'spouse', 'siblings', 'children', 'familyMembers',
@@ -370,7 +370,7 @@ class UserService {
       }
     }
 
-    if (data.password !== undefined) {
+    if (data.password !== undefined && data.hasLogin !== false) {
       const nextPassword = typeof data.password === 'string' ? data.password.trim() : '';
       if (nextPassword) {
         if (!user.hasLogin) {
