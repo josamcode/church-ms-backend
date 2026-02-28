@@ -20,6 +20,7 @@ const confessionsRoutes = require('./modules/confessions/confessions.routes');
 const visitationsRoutes = require('./modules/visitations/visitations.routes');
 const meetingsRoutes = require('./modules/meetings/meetings.routes');
 const divineLiturgiesRoutes = require('./modules/divineLiturgies/divineLiturgies.routes');
+const notificationsRoutes = require('./modules/notifications/notifications.routes');
 
 // Swagger
 const { swaggerUi, specs } = require('./docs/swagger');
@@ -91,6 +92,7 @@ app.use('/api/confessions', confessionsRoutes);
 app.use('/api/visitations', visitationsRoutes);
 app.use('/api/meetings', meetingsRoutes);
 app.use('/api/divine-liturgies', divineLiturgiesRoutes);
+app.use('/api/notifications', notificationsRoutes);
 
 /* ══════════════════ Health Check ══════════════════ */
 
