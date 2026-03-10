@@ -708,6 +708,13 @@ class HouseholdClassificationService {
         : existingProfile?.financial?.incomeSources || [];
 
     const shouldRedistributeIncome = wantsToUpdateMembers && data.totalIncome !== undefined;
+    const shouldCheckAutomaticClassification =
+      shouldRedistributeIncome &&
+      data.manualPrimaryClassificationId === undefined &&
+      !existingProfile?.manualPrimaryClassificationId;
+    const currentEvaluation = shouldCheckAutomaticClassification
+      ? await this.getHouseholdByName(currentHouseName).catch(() => null)
+      : null;
     const incomeDistribution = shouldRedistributeIncome
       ? this._buildIncomeDistribution(data.totalIncome, members)
       : [];
@@ -773,8 +780,9 @@ class HouseholdClassificationService {
       })
     );
 
+    let profile = null;
     if (existingProfile || canManageHouseholdProfiles) {
-      const profile =
+      profile =
         existingProfile ||
         new HouseholdProfile({
           houseName: nextHouseName,
@@ -793,6 +801,28 @@ class HouseholdClassificationService {
       await profile.save();
     }
 
+    let updatedHousehold = await this.getHouseholdByName(nextHouseName);
+    const shouldStoreAutomaticClassification =
+      shouldCheckAutomaticClassification &&
+      !currentEvaluation?.primaryClassification &&
+      Boolean(updatedHousehold?.primaryClassification?.id);
+
+    if (shouldStoreAutomaticClassification) {
+      const autoProfile =
+        profile ||
+        existingProfile ||
+        new HouseholdProfile({
+          houseName: nextHouseName,
+          createdBy: actorUserId,
+        });
+
+      autoProfile.houseName = nextHouseName;
+      autoProfile.manualPrimaryClassificationId = updatedHousehold.primaryClassification.id;
+      autoProfile.updatedBy = actorUserId;
+      await autoProfile.save();
+      updatedHousehold = await this.getHouseholdByName(nextHouseName);
+    }
+
     await Promise.all(
       members.map(async (member) => {
         try {
@@ -805,7 +835,7 @@ class HouseholdClassificationService {
       })
     );
 
-    return this.getHouseholdByName(nextHouseName);
+    return updatedHousehold;
   }
 
   async getHouseholdSummaryForUser(user) {
