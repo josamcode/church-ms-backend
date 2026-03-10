@@ -139,7 +139,7 @@ class HouseholdClassificationService {
     }
   }
 
-  _serializeCategory(category) {
+  _serializeCategory(category, extra = {}) {
     return {
       id: String(category._id || category.id),
       name: category.name,
@@ -149,6 +149,7 @@ class HouseholdClassificationService {
       isDefault: Boolean(category.isDefault),
       isActive: Boolean(category.isActive),
       isConfigured: Array.isArray(category.criteria) && category.criteria.length > 0,
+      count: Number(extra.count) || 0,
       criteriaCount: Array.isArray(category.criteria) ? category.criteria.length : 0,
       criteria: Array.isArray(category.criteria)
         ? category.criteria.map((criterion) => ({
@@ -168,13 +169,43 @@ class HouseholdClassificationService {
     };
   }
 
+  async _buildCategoryCountMap(categories = []) {
+    const activeCategories = (Array.isArray(categories) ? categories : []).filter(
+      (category) => Boolean(category) && category.isActive !== false && category.isDeleted !== true
+    );
+
+    if (activeCategories.length === 0) {
+      return new Map();
+    }
+
+    const users = await this._loadUsersForEvaluation();
+    const evaluations = buildHouseholdSnapshots(users).map((snapshot) =>
+      evaluateHouseholdSnapshot(snapshot, activeCategories)
+    );
+
+    const categoryCountMap = new Map();
+    evaluations.forEach((entry) => {
+      if (!entry.primaryClassification?.id) return;
+      const key = String(entry.primaryClassification.id);
+      categoryCountMap.set(key, (categoryCountMap.get(key) || 0) + 1);
+    });
+
+    return categoryCountMap;
+  }
+
   async listCategories() {
     await this.ensureDefaultCategories();
     const categories = await HouseholdClassification.find({ isDeleted: { $ne: true } })
       .sort({ priority: 1, name: 1 })
       .lean();
 
-    return categories.map((category) => this._serializeCategory(category));
+    const categoryCountMap = await this._buildCategoryCountMap(categories);
+
+    return categories.map((category) =>
+      this._serializeCategory(category, {
+        count: categoryCountMap.get(String(category._id || category.id)) || 0,
+      })
+    );
   }
 
   async createCategory(data, actorUserId) {
