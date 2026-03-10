@@ -4,6 +4,11 @@ const { ROLES, ROLES_ARRAY } = require('../../constants/roles');
 const { PERMISSIONS_ARRAY } = require('../../constants/permissions');
 const { AGE_GROUPS_ARRAY, getAgeGroup } = require('../../constants/ageGroups');
 const { LOCK_REASONS_ARRAY } = require('../../constants/lockReasons');
+const {
+  EMPLOYMENT_STATUSES_ARRAY,
+  PRESENCE_STATUSES,
+  PRESENCE_STATUSES_ARRAY,
+} = require('../../constants/householdProfiles');
 
 /* ──────────────── Sub-schemas ──────────────── */
 
@@ -13,6 +18,61 @@ const addressSchema = new mongoose.Schema(
     city: { type: String, trim: true },
     street: { type: String, trim: true },
     details: { type: String, trim: true },
+  },
+  { _id: false }
+);
+
+const financialProfileSchema = new mongoose.Schema(
+  {
+    monthlyIncome: { type: Number, min: 0 },
+    currency: { type: String, trim: true, default: 'EGP' },
+    source: { type: String, trim: true },
+    notes: { type: String, trim: true },
+  },
+  { _id: false }
+);
+
+const employmentProfileSchema = new mongoose.Schema(
+  {
+    status: {
+      type: String,
+      enum: EMPLOYMENT_STATUSES_ARRAY,
+    },
+    jobTitle: { type: String, trim: true },
+    employerName: { type: String, trim: true },
+    notes: { type: String, trim: true },
+  },
+  { _id: false }
+);
+
+const presenceProfileSchema = new mongoose.Schema(
+  {
+    status: {
+      type: String,
+      enum: PRESENCE_STATUSES_ARRAY,
+      default: PRESENCE_STATUSES.PRESENT,
+    },
+    travelDestination: { type: String, trim: true },
+    travelReason: { type: String, trim: true },
+  },
+  { _id: false }
+);
+
+const healthConditionSchema = new mongoose.Schema(
+  {
+    name: { type: String, trim: true, required: true },
+    chronic: { type: Boolean, default: false },
+    notes: { type: String, trim: true },
+  },
+  { _id: false }
+);
+
+const healthProfileSchema = new mongoose.Schema(
+  {
+    conditions: {
+      type: [healthConditionSchema],
+      default: [],
+    },
   },
   { _id: false }
 );
@@ -112,6 +172,13 @@ const userSchema = new mongoose.Schema(
     customDetails: {
       type: mongoose.Schema.Types.Mixed,
       default: () => ({}),
+    },
+    financial: financialProfileSchema,
+    employment: employmentProfileSchema,
+    presence: presenceProfileSchema,
+    health: {
+      type: healthProfileSchema,
+      default: () => ({ conditions: [] }),
     },
 
     // ═══════ B) الحالة المشتقة ═══════
@@ -228,6 +295,9 @@ userSchema.index({ isDeleted: 1, fullName: 1 });
 userSchema.index({ isDeleted: 1, ageGroup: 1 });
 userSchema.index({ isDeleted: 1, tags: 1 });
 userSchema.index({ isDeleted: 1, role: 1 });
+userSchema.index({ 'employment.status': 1 });
+userSchema.index({ 'presence.status': 1 });
+userSchema.index({ 'health.conditions.name': 1 });
 userSchema.index({ 'father.userId': 1 }, { sparse: true });
 userSchema.index({ 'mother.userId': 1 }, { sparse: true });
 userSchema.index({ 'spouse.userId': 1 }, { sparse: true });
@@ -261,6 +331,11 @@ userSchema.pre('save', async function (next) {
   // Set whatsapp default to phonePrimary
   if (!this.whatsappNumber && this.phonePrimary) {
     this.whatsappNumber = this.phonePrimary;
+  }
+
+  if (this.presence && this.presence.status !== PRESENCE_STATUSES.TRAVELING) {
+    this.presence.travelDestination = undefined;
+    this.presence.travelReason = undefined;
   }
 
   next();

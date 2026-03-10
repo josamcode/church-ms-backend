@@ -34,6 +34,14 @@ const getHouseNames = asyncHandler(async (req, res) => {
   });
 });
 
+const getProfileOptionValues = asyncHandler(async (req, res) => {
+  const values = await userService.getProfileOptionValues();
+  return ApiResponse.success(res, {
+    message: 'Profile option values loaded successfully',
+    data: values,
+  });
+});
+
 const getRelationRoles = asyncHandler(async (req, res) => {
   const roles = await userService.getRelationRoles();
   return ApiResponse.success(res, {
@@ -149,6 +157,7 @@ module.exports = {
   getCustomDetailKeys,
   getFamilyNames,
   getHouseNames,
+  getProfileOptionValues,
   getRelationRoles,
   createRelationRole,
   listUsers,

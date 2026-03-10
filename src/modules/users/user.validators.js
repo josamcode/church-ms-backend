@@ -3,6 +3,10 @@ const { ROLES_ARRAY } = require('../../constants/roles');
 const { AGE_GROUPS_ARRAY } = require('../../constants/ageGroups');
 const { LOCK_REASONS_ARRAY } = require('../../constants/lockReasons');
 const { PERMISSIONS_ARRAY } = require('../../constants/permissions');
+const {
+  EMPLOYMENT_STATUSES_ARRAY,
+  PRESENCE_STATUSES_ARRAY,
+} = require('../../constants/householdProfiles');
 
 const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#^()_\-+=])[A-Za-z\d@$!%*?&#^()_\-+=]{8,}$/;
 const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
@@ -25,6 +29,42 @@ const addressSchema = Joi.object({
   city: Joi.string().trim().allow('', null).optional(),
   street: Joi.string().trim().allow('', null).optional(),
   details: Joi.string().trim().allow('', null).optional(),
+});
+
+const financialSchema = Joi.object({
+  monthlyIncome: Joi.number().min(0).allow(null).optional(),
+  currency: Joi.string().trim().allow('', null).optional(),
+  source: Joi.string().trim().allow('', null).optional(),
+  notes: Joi.string().trim().allow('', null).optional(),
+});
+
+const employmentSchema = Joi.object({
+  status: Joi.string()
+    .valid(...EMPLOYMENT_STATUSES_ARRAY)
+    .allow('', null)
+    .optional(),
+  jobTitle: Joi.string().trim().allow('', null).optional(),
+  employerName: Joi.string().trim().allow('', null).optional(),
+  notes: Joi.string().trim().allow('', null).optional(),
+});
+
+const presenceSchema = Joi.object({
+  status: Joi.string()
+    .valid(...PRESENCE_STATUSES_ARRAY)
+    .allow('', null)
+    .optional(),
+  travelDestination: Joi.string().trim().allow('', null).optional(),
+  travelReason: Joi.string().trim().allow('', null).optional(),
+});
+
+const healthConditionSchema = Joi.object({
+  name: Joi.string().trim().min(1).required(),
+  chronic: Joi.boolean().optional(),
+  notes: Joi.string().trim().allow('', null).optional(),
+});
+
+const healthSchema = Joi.object({
+  conditions: Joi.array().items(healthConditionSchema).optional(),
 });
 
 /* ──────── فرد عائلة (للتحديث) ──────── */
@@ -75,6 +115,10 @@ const createUser = {
       'string.email': 'البريد الإلكتروني غير صالح',
     }),
     address: addressSchema.optional(),
+    financial: financialSchema.optional(),
+    employment: employmentSchema.optional(),
+    presence: presenceSchema.optional(),
+    health: healthSchema.optional(),
     tags: Joi.array().items(Joi.string().trim()).optional(),
     familyName: Joi.string().trim().allow('', null).optional(),
     houseName: Joi.string().trim().allow('', null).optional(),
@@ -117,6 +161,10 @@ const updateUser = {
     whatsappNumber: Joi.string().trim().min(10).max(15).allow(null, '').optional(),
     email: Joi.string().email().lowercase().trim().allow(null, '').optional(),
     address: addressSchema.optional(),
+    financial: financialSchema.allow(null).optional(),
+    employment: employmentSchema.allow(null).optional(),
+    presence: presenceSchema.allow(null).optional(),
+    health: healthSchema.allow(null).optional(),
     tags: Joi.array().items(Joi.string().trim()).optional(),
     familyName: Joi.string().trim().allow(null, '').optional(),
     houseName: Joi.string().trim().allow(null, '').optional(),

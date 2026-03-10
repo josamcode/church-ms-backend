@@ -12,6 +12,13 @@ const config = require('../../config/env');
 const logger = require('../../utils/logger');
 
 class UserService {
+  _normalizeDistinctStringValues(values = []) {
+    return [...new Set((Array.isArray(values) ? values : [])
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }
+
   /**
    * إنشاء مستخدم جديد (مع أو بدون تسجيل دخول)
    */
@@ -203,6 +210,34 @@ class UserService {
     return [...new Set(names)].sort();
   }
 
+  async getProfileOptionValues() {
+    const baseFilter = { isDeleted: { $ne: true } };
+    const [
+      incomeSources,
+      jobTitles,
+      employerNames,
+      travelDestinations,
+      travelReasons,
+      healthConditions,
+    ] = await Promise.all([
+      User.distinct('financial.source', baseFilter),
+      User.distinct('employment.jobTitle', baseFilter),
+      User.distinct('employment.employerName', baseFilter),
+      User.distinct('presence.travelDestination', baseFilter),
+      User.distinct('presence.travelReason', baseFilter),
+      User.distinct('health.conditions.name', baseFilter),
+    ]);
+
+    return {
+      incomeSources: this._normalizeDistinctStringValues(incomeSources),
+      jobTitles: this._normalizeDistinctStringValues(jobTitles),
+      employerNames: this._normalizeDistinctStringValues(employerNames),
+      travelDestinations: this._normalizeDistinctStringValues(travelDestinations),
+      travelReasons: this._normalizeDistinctStringValues(travelReasons),
+      healthConditions: this._normalizeDistinctStringValues(healthConditions),
+    };
+  }
+
   /**
    * جلب العلاقات العكسية: مستخدمون أضافوا هذا المستخدم في عائلتهم (أب، أم، زوج، إلخ)
    * يُستخدم لعرض "من يرتبط بي من جهة الآخرين" دون تخزين في الكاش
@@ -325,7 +360,16 @@ class UserService {
     }
 
     const inverseFamily = await this.getInverseFamily(user._id || user.id || userId);
-    return { ...user, inverseFamily };
+    let householdClassificationSummary = null;
+    try {
+      const householdClassificationService = require('../householdClassifications/householdClassification.service');
+      householdClassificationSummary =
+        await householdClassificationService.getHouseholdSummaryForUser(user);
+    } catch (_error) {
+      householdClassificationSummary = null;
+    }
+
+    return { ...user, inverseFamily, householdClassificationSummary };
   }
 
   /**
@@ -346,7 +390,8 @@ class UserService {
     const allowedFields = [
       'fullName', 'gender', 'birthDate', 'nationalId', 'notes',
       'phonePrimary', 'phoneSecondary', 'whatsappNumber', 'email',
-      'address', 'tags', 'familyName', 'houseName', 'role', 'hasLogin', 'extraPermissions',
+      'address', 'financial', 'employment', 'presence', 'health',
+      'tags', 'familyName', 'houseName', 'role', 'hasLogin', 'extraPermissions',
       'deniedPermissions', 'confessionFatherName', 'confessionFatherUserId',
       'avatar', 'customDetails',
       'father', 'mother', 'spouse', 'siblings', 'children', 'familyMembers',

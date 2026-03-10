@@ -55,6 +55,13 @@ router.get(
 );
 
 router.get(
+  '/profile-option-values',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.USERS_VIEW),
+  userController.getProfileOptionValues
+);
+
+router.get(
   '/relation-roles',
   authenticateJWT,
   authorizePermissions(PERMISSIONS.USERS_VIEW),
