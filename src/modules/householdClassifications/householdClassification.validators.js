@@ -72,9 +72,32 @@ const listHouseholds = {
   }),
 };
 
+const getHouseholdByName = {
+  query: Joi.object({
+    houseName: Joi.string().trim().min(2).max(160).required(),
+  }),
+};
+
+const updateHousehold = {
+  body: Joi.object({
+    currentHouseName: Joi.string().trim().min(2).max(160).required(),
+    houseName: Joi.string().trim().min(2).max(160).optional(),
+    manualPrimaryClassificationId: Joi.string()
+      .pattern(OBJECT_ID_PATTERN)
+      .allow('', null)
+      .optional(),
+    totalIncome: Joi.number().min(0).optional(),
+    incomeSources: Joi.array().items(Joi.string().trim().min(1)).optional(),
+  })
+    .min(1)
+    .messages({ 'object.min': 'At least one household field must be provided.' }),
+};
+
 module.exports = {
   createCategory,
+  getHouseholdByName,
   idParam,
   listHouseholds,
+  updateHousehold,
   updateCategory,
 };

@@ -1,7 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateJWT } = require('../../middlewares/auth');
-const { authorizePermissions } = require('../../middlewares/permissions');
+const {
+  authorizeAnyPermissions,
+  authorizePermissions,
+} = require('../../middlewares/permissions');
 const validate = require('../../middlewares/validate');
 const { PERMISSIONS } = require('../../constants/permissions');
 const householdClassificationController = require('./householdClassification.controller');
@@ -44,6 +47,25 @@ router.get(
   authorizePermissions(PERMISSIONS.HOUSEHOLD_CLASSIFICATIONS_VIEW),
   validate(householdClassificationValidators.listHouseholds),
   householdClassificationController.listHouseholds
+);
+
+router.get(
+  '/households/details',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.HOUSEHOLD_CLASSIFICATIONS_VIEW),
+  validate(householdClassificationValidators.getHouseholdByName),
+  householdClassificationController.getHouseholdByName
+);
+
+router.patch(
+  '/households/details',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.USERS_UPDATE,
+    PERMISSIONS.HOUSEHOLD_CLASSIFICATIONS_MANAGE
+  ),
+  validate(householdClassificationValidators.updateHousehold),
+  householdClassificationController.updateHousehold
 );
 
 module.exports = router;

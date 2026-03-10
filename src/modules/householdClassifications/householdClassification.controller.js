@@ -56,10 +56,32 @@ const listHouseholds = asyncHandler(async (req, res) => {
   });
 });
 
+const getHouseholdByName = asyncHandler(async (req, res) => {
+  const household = await householdClassificationService.getHouseholdByName(req.query.houseName);
+  return ApiResponse.success(res, {
+    message: 'Household loaded successfully.',
+    data: household,
+  });
+});
+
+const updateHousehold = asyncHandler(async (req, res) => {
+  const household = await householdClassificationService.updateHousehold(
+    req.body,
+    req.user.id,
+    req.userPermissions
+  );
+  return ApiResponse.success(res, {
+    message: 'Household updated successfully.',
+    data: household,
+  });
+});
+
 module.exports = {
   createCategory,
   deleteCategory,
+  getHouseholdByName,
   listCategories,
   listHouseholds,
+  updateHousehold,
   updateCategory,
 };
