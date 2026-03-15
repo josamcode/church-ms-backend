@@ -1,4 +1,5 @@
 const { getAgeGroup } = require('../../constants/ageGroups');
+const { getEducationStageGroup } = require('../../constants/education');
 const {
   HOUSEHOLD_CLASSIFICATION_METRICS,
   HOUSEHOLD_CLASSIFICATION_OPERATORS,
@@ -41,6 +42,8 @@ function mapMember(member) {
     houseName: trimOrNull(member.houseName),
     gender: member.gender || null,
     ageGroup: member.ageGroup || getAgeGroup(member.birthDate) || null,
+    educationStage: member?.education?.stage || null,
+    educationStageGroup: getEducationStageGroup(member?.education?.stage),
     employmentStatus: member?.employment?.status || null,
     presenceStatus: member?.presence?.status || 'present',
     travelDestination: trimOrNull(member?.presence?.travelDestination),
@@ -102,6 +105,7 @@ function hasActiveMemberFilters(filters = {}) {
   const arrayKeys = [
     'genders',
     'ageGroups',
+    'educationStages',
     'employmentStatuses',
     'presenceStatuses',
     'diseases',
@@ -124,6 +128,13 @@ function memberMatchesFilters(member, filters = {}) {
 
   if (Array.isArray(filters.ageGroups) && filters.ageGroups.length > 0) {
     if (!filters.ageGroups.includes(member.ageGroup)) return false;
+  }
+
+  if (Array.isArray(filters.educationStages) && filters.educationStages.length > 0) {
+    const matchedEducationStage = filters.educationStages.some(
+      (value) => value === member.educationStage || value === member.educationStageGroup
+    );
+    if (!matchedEducationStage) return false;
   }
 
   if (Array.isArray(filters.employmentStatuses) && filters.employmentStatuses.length > 0) {

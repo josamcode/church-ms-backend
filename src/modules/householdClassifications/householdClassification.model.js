@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { AGE_GROUPS_ARRAY } = require('../../constants/ageGroups');
+const { EDUCATION_STAGE_FILTER_VALUES } = require('../../constants/education');
 const {
   EMPLOYMENT_STATUSES_ARRAY,
   PRESENCE_STATUSES_ARRAY,
@@ -21,6 +22,12 @@ const criterionFiltersSchema = new mongoose.Schema(
       {
         type: String,
         enum: AGE_GROUPS_ARRAY,
+      },
+    ],
+    educationStages: [
+      {
+        type: String,
+        enum: EDUCATION_STAGE_FILTER_VALUES,
       },
     ],
     employmentStatuses: [

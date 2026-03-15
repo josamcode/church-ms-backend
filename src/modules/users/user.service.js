@@ -219,6 +219,11 @@ class UserService {
       travelDestinations,
       travelReasons,
       healthConditions,
+      fieldOfStudies,
+      kindergartenNames,
+      schoolNames,
+      universityNames,
+      facultyNames,
     ] = await Promise.all([
       User.distinct('financial.source', baseFilter),
       User.distinct('employment.jobTitle', baseFilter),
@@ -226,6 +231,11 @@ class UserService {
       User.distinct('presence.travelDestination', baseFilter),
       User.distinct('presence.travelReason', baseFilter),
       User.distinct('health.conditions.name', baseFilter),
+      User.distinct('education.fieldOfStudy', baseFilter),
+      User.distinct('education.kindergartenName', baseFilter),
+      User.distinct('education.schoolName', baseFilter),
+      User.distinct('education.universityName', baseFilter),
+      User.distinct('education.facultyName', baseFilter),
     ]);
 
     return {
@@ -235,6 +245,11 @@ class UserService {
       travelDestinations: this._normalizeDistinctStringValues(travelDestinations),
       travelReasons: this._normalizeDistinctStringValues(travelReasons),
       healthConditions: this._normalizeDistinctStringValues(healthConditions),
+      fieldOfStudies: this._normalizeDistinctStringValues(fieldOfStudies),
+      kindergartenNames: this._normalizeDistinctStringValues(kindergartenNames),
+      schoolNames: this._normalizeDistinctStringValues(schoolNames),
+      universityNames: this._normalizeDistinctStringValues(universityNames),
+      facultyNames: this._normalizeDistinctStringValues(facultyNames),
     };
   }
 
@@ -390,7 +405,7 @@ class UserService {
     const allowedFields = [
       'fullName', 'gender', 'birthDate', 'nationalId', 'notes',
       'phonePrimary', 'phoneSecondary', 'whatsappNumber', 'email',
-      'address', 'financial', 'employment', 'presence', 'health',
+      'address', 'financial', 'employment', 'presence', 'education', 'health',
       'tags', 'familyName', 'houseName', 'role', 'hasLogin', 'extraPermissions',
       'deniedPermissions', 'confessionFatherName', 'confessionFatherUserId',
       'avatar', 'customDetails',

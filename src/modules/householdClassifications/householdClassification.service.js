@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const redisClient = require('../../config/redis');
 const { CACHE_KEYS } = require('../../constants/cacheKeys');
+const { getEducationStageGroup } = require('../../constants/education');
 const { PERMISSIONS } = require('../../constants/permissions');
 const User = require('../users/user.model');
 const ApiError = require('../../utils/ApiError');
@@ -123,10 +124,17 @@ class HouseholdClassificationService {
   _normalizeFilters(filters = {}) {
     const normalizeArray = (value) =>
       [...new Set((Array.isArray(value) ? value : []).map(trimString).filter(Boolean))];
+    const normalizeEducationStages = (value) =>
+      [...new Set(
+        (Array.isArray(value) ? value : [])
+          .map((entry) => getEducationStageGroup(trimString(entry)))
+          .filter(Boolean)
+      )];
 
     const normalized = {
       genders: normalizeArray(filters.genders),
       ageGroups: normalizeArray(filters.ageGroups),
+      educationStages: normalizeEducationStages(filters.educationStages),
       employmentStatuses: normalizeArray(filters.employmentStatuses),
       presenceStatuses: normalizeArray(filters.presenceStatuses),
       diseases: normalizeArray(filters.diseases),
@@ -431,6 +439,7 @@ class HouseholdClassificationService {
           'gender',
           'ageGroup',
           'birthDate',
+          'education',
           'financial',
           'employment',
           'presence',

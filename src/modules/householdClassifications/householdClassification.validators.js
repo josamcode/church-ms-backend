@@ -1,5 +1,6 @@
 const Joi = require('joi');
 const { AGE_GROUPS_ARRAY } = require('../../constants/ageGroups');
+const { EDUCATION_STAGE_FILTER_VALUES } = require('../../constants/education');
 const {
   EMPLOYMENT_STATUSES_ARRAY,
   PRESENCE_STATUSES_ARRAY,
@@ -14,6 +15,7 @@ const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
 const criterionFiltersSchema = Joi.object({
   genders: Joi.array().items(Joi.string().valid('male', 'female', 'other')).optional(),
   ageGroups: Joi.array().items(Joi.string().valid(...AGE_GROUPS_ARRAY)).optional(),
+  educationStages: Joi.array().items(Joi.string().valid(...EDUCATION_STAGE_FILTER_VALUES)).optional(),
   employmentStatuses: Joi.array()
     .items(Joi.string().valid(...EMPLOYMENT_STATUSES_ARRAY))
     .optional(),

@@ -9,6 +9,7 @@ const {
   PRESENCE_STATUSES,
   PRESENCE_STATUSES_ARRAY,
 } = require('../../constants/householdProfiles');
+const { EDUCATION_STAGE_VALUES, getEducationStageContext } = require('../../constants/education');
 
 /* ──────────────── Sub-schemas ──────────────── */
 
@@ -73,6 +74,21 @@ const healthProfileSchema = new mongoose.Schema(
       type: [healthConditionSchema],
       default: [],
     },
+  },
+  { _id: false }
+);
+
+const educationProfileSchema = new mongoose.Schema(
+  {
+    stage: {
+      type: String,
+      enum: EDUCATION_STAGE_VALUES,
+    },
+    fieldOfStudy: { type: String, trim: true },
+    kindergartenName: { type: String, trim: true },
+    schoolName: { type: String, trim: true },
+    universityName: { type: String, trim: true },
+    facultyName: { type: String, trim: true },
   },
   { _id: false }
 );
@@ -249,6 +265,7 @@ const userSchema = new mongoose.Schema(
     financial: financialProfileSchema,
     employment: employmentProfileSchema,
     presence: presenceProfileSchema,
+    education: educationProfileSchema,
     health: {
       type: healthProfileSchema,
       default: () => ({ conditions: [] }),
@@ -371,6 +388,12 @@ userSchema.index({ isDeleted: 1, tags: 1 });
 userSchema.index({ isDeleted: 1, role: 1 });
 userSchema.index({ 'employment.status': 1 });
 userSchema.index({ 'presence.status': 1 });
+userSchema.index({ 'education.stage': 1 });
+userSchema.index({ 'education.fieldOfStudy': 1 });
+userSchema.index({ 'education.kindergartenName': 1 });
+userSchema.index({ 'education.schoolName': 1 });
+userSchema.index({ 'education.universityName': 1 });
+userSchema.index({ 'education.facultyName': 1 });
 userSchema.index({ 'health.conditions.name': 1 });
 userSchema.index({ 'meetingAttendance.meetingId': 1, 'meetingAttendance.attendanceDate': -1 });
 userSchema.index({
@@ -415,6 +438,37 @@ userSchema.pre('save', async function (next) {
   if (this.presence && this.presence.status !== PRESENCE_STATUSES.TRAVELING) {
     this.presence.travelDestination = undefined;
     this.presence.travelReason = undefined;
+  }
+
+  if (this.education) {
+    const context = getEducationStageContext(this.education.stage);
+    const isKindergarten = context === 'kindergarten';
+    const isSchool = context === 'school';
+    const isUniversity = context === 'university';
+
+    if (!isKindergarten) {
+      this.education.kindergartenName = undefined;
+    }
+    if (!isSchool) {
+      this.education.schoolName = undefined;
+    }
+    if (!isUniversity) {
+      this.education.universityName = undefined;
+      this.education.facultyName = undefined;
+    }
+
+    const hasEducationData = [
+      this.education.stage,
+      this.education.fieldOfStudy,
+      this.education.kindergartenName,
+      this.education.schoolName,
+      this.education.universityName,
+      this.education.facultyName,
+    ].some((value) => Boolean(value));
+
+    if (!hasEducationData) {
+      this.education = undefined;
+    }
   }
 
   next();

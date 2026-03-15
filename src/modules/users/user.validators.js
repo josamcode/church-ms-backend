@@ -7,6 +7,7 @@ const {
   EMPLOYMENT_STATUSES_ARRAY,
   PRESENCE_STATUSES_ARRAY,
 } = require('../../constants/householdProfiles');
+const { EDUCATION_STAGE_VALUES } = require('../../constants/education');
 
 const PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#^()_\-+=])[A-Za-z\d@$!%*?&#^()_\-+=]{8,}$/;
 const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
@@ -67,6 +68,18 @@ const healthSchema = Joi.object({
   conditions: Joi.array().items(healthConditionSchema).optional(),
 });
 
+const educationSchema = Joi.object({
+  stage: Joi.string()
+    .valid(...EDUCATION_STAGE_VALUES)
+    .allow('', null)
+    .optional(),
+  fieldOfStudy: Joi.string().trim().allow('', null).optional(),
+  kindergartenName: Joi.string().trim().allow('', null).optional(),
+  schoolName: Joi.string().trim().allow('', null).optional(),
+  universityName: Joi.string().trim().allow('', null).optional(),
+  facultyName: Joi.string().trim().allow('', null).optional(),
+});
+
 /* ──────── فرد عائلة (للتحديث) ──────── */
 
 const familyMemberSchema = Joi.object({
@@ -119,6 +132,7 @@ const createUser = {
     employment: employmentSchema.optional(),
     presence: presenceSchema.optional(),
     health: healthSchema.optional(),
+    education: educationSchema.optional(),
     tags: Joi.array().items(Joi.string().trim()).optional(),
     familyName: Joi.string().trim().allow('', null).optional(),
     houseName: Joi.string().trim().allow('', null).optional(),
@@ -165,6 +179,7 @@ const updateUser = {
     employment: employmentSchema.allow(null).optional(),
     presence: presenceSchema.allow(null).optional(),
     health: healthSchema.allow(null).optional(),
+    education: educationSchema.allow(null).optional(),
     tags: Joi.array().items(Joi.string().trim()).optional(),
     familyName: Joi.string().trim().allow(null, '').optional(),
     houseName: Joi.string().trim().allow(null, '').optional(),
