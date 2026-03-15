@@ -1,5 +1,8 @@
 const mongoose = require('mongoose');
 const User = require('./user.model');
+const Meeting = require('../meetings/meeting.model');
+const DivineLiturgyRecurring = require('../divineLiturgies/divineLiturgyRecurring.model');
+const DivineLiturgyException = require('../divineLiturgies/divineLiturgyException.model');
 const RelationRole = require('./relationRole.model');
 const ApiError = require('../../utils/ApiError');
 const redisClient = require('../../config/redis');
@@ -8,15 +11,75 @@ const streamifier = require('streamifier');
 const { CACHE_KEYS, CACHE_TTL } = require('../../constants/cacheKeys');
 const { buildPaginationMeta } = require('../../utils/pagination');
 const { ROLES } = require('../../constants/roles');
+const { SERVICE_TYPES } = require('../divineLiturgies/divineLiturgyRecurring.model');
 const config = require('../../config/env');
 const logger = require('../../utils/logger');
 
 class UserService {
+  _toComparableId(value) {
+    if (!value) return null;
+    if (typeof value === 'string' || typeof value === 'number') return String(value);
+    if (typeof value === 'object') {
+      if (value._id != null) return String(value._id);
+      if (value.id != null) return String(value.id);
+    }
+    return String(value);
+  }
+
   _normalizeDistinctStringValues(values = []) {
     return [...new Set((Array.isArray(values) ? values : [])
       .map((value) => (typeof value === 'string' ? value.trim() : ''))
       .filter(Boolean))]
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }
+
+  _getRecurringDivineLiturgyDisplayName(service) {
+    const serviceLabel =
+      service?.serviceType === SERVICE_TYPES.DIVINE_LITURGY
+        ? 'Divine Liturgy'
+        : 'Vespers of the Divine Liturgy';
+    return `${service?.dayOfWeek || ''} ${serviceLabel}`.trim() || serviceLabel;
+  }
+
+  _getExceptionDivineLiturgyDisplayName(service, dateIso) {
+    return String(service?.name || '').trim() || `Exceptional Divine Liturgy (${dateIso || 'unknown date'})`;
+  }
+
+  _mapHydratedDivineLiturgyService(entryType, service) {
+    if (!service) return null;
+
+    if (entryType === 'recurring') {
+      const displayName =
+        String(service?.name || '').trim() || this._getRecurringDivineLiturgyDisplayName(service);
+      return {
+        id: this._toComparableId(service._id),
+        entryType,
+        serviceType: service?.serviceType || SERVICE_TYPES.DIVINE_LITURGY,
+        name: String(service?.name || '').trim() || null,
+        displayName,
+        dayOfWeek: service?.dayOfWeek || null,
+        date: null,
+        startTime: service?.startTime || null,
+        endTime: service?.endTime || null,
+      };
+    }
+
+    const dateValue = service?.date instanceof Date ? service.date : new Date(service?.date);
+    const dateIso =
+      dateValue instanceof Date && !Number.isNaN(dateValue.getTime())
+        ? dateValue.toISOString().slice(0, 10)
+        : null;
+    return {
+      id: this._toComparableId(service._id),
+      entryType,
+      serviceType: SERVICE_TYPES.DIVINE_LITURGY,
+      name: String(service?.name || '').trim() || null,
+      displayName: this._getExceptionDivineLiturgyDisplayName(service, dateIso),
+      dayOfWeek: null,
+      date: dateIso,
+      startTime: service?.startTime || null,
+      endTime: service?.endTime || null,
+    };
   }
 
   /**
@@ -253,6 +316,190 @@ class UserService {
     };
   }
 
+  async _hydrateMeetingAttendanceEntries(entries = []) {
+    const attendanceEntries = Array.isArray(entries) ? entries : [];
+    if (!attendanceEntries.length) return [];
+
+    const meetingIds = [...new Set(
+      attendanceEntries
+        .map((entry) => this._toComparableId(entry?.meetingId))
+        .filter(Boolean)
+    )];
+    const actorIds = [...new Set(
+      attendanceEntries
+        .flatMap((entry) => [
+          this._toComparableId(entry?.recordedBy),
+          this._toComparableId(entry?.updatedBy),
+        ])
+        .filter(Boolean)
+    )];
+
+    const [meetings, actors] = await Promise.all([
+      meetingIds.length
+        ? Meeting.find({
+          _id: { $in: meetingIds },
+          isDeleted: { $ne: true },
+        })
+          .select('name day time')
+          .lean()
+        : [],
+      actorIds.length
+        ? User.find({
+          _id: { $in: actorIds },
+          isDeleted: { $ne: true },
+        })
+          .select('fullName')
+          .lean()
+        : [],
+    ]);
+
+    const meetingMap = new Map(
+      meetings.map((meeting) => [this._toComparableId(meeting._id), meeting])
+    );
+    const actorMap = new Map(
+      actors.map((actor) => [this._toComparableId(actor._id), actor])
+    );
+
+    return attendanceEntries
+      .map((entry) => {
+        const meetingId = this._toComparableId(entry?.meetingId);
+        const recordedById = this._toComparableId(entry?.recordedBy);
+        const updatedById = this._toComparableId(entry?.updatedBy);
+        const meeting = meetingId ? meetingMap.get(meetingId) : null;
+        const recordedBy = recordedById ? actorMap.get(recordedById) : null;
+        const updatedBy = updatedById ? actorMap.get(updatedById) : null;
+
+        return {
+          ...entry,
+          meetingId,
+          meeting: meeting
+            ? {
+              id: meetingId,
+              name: meeting.name || '',
+              day: meeting.day || '',
+              time: meeting.time || '',
+            }
+            : null,
+          recordedBy: recordedById
+            ? {
+              id: recordedById,
+              fullName: recordedBy?.fullName || '',
+            }
+            : null,
+          updatedBy: updatedById
+            ? {
+              id: updatedById,
+              fullName: updatedBy?.fullName || '',
+            }
+            : null,
+        };
+      })
+      .sort((a, b) => {
+        const dateCompare = String(b?.attendanceDate || '').localeCompare(String(a?.attendanceDate || ''));
+        if (dateCompare !== 0) return dateCompare;
+        return new Date(b?.updatedAt || 0).getTime() - new Date(a?.updatedAt || 0).getTime();
+      });
+  }
+
+  async _hydrateDivineLiturgyAttendanceEntries(entries = []) {
+    const attendanceEntries = Array.isArray(entries) ? entries : [];
+    if (!attendanceEntries.length) return [];
+
+    const recurringServiceIds = [...new Set(
+      attendanceEntries
+        .filter((entry) => String(entry?.entryType || '').trim().toLowerCase() === 'recurring')
+        .map((entry) => this._toComparableId(entry?.serviceId))
+        .filter(Boolean)
+    )];
+    const exceptionServiceIds = [...new Set(
+      attendanceEntries
+        .filter((entry) => String(entry?.entryType || '').trim().toLowerCase() === 'exception')
+        .map((entry) => this._toComparableId(entry?.serviceId))
+        .filter(Boolean)
+    )];
+    const actorIds = [...new Set(
+      attendanceEntries
+        .flatMap((entry) => [
+          this._toComparableId(entry?.recordedBy),
+          this._toComparableId(entry?.updatedBy),
+        ])
+        .filter(Boolean)
+    )];
+
+    const [recurringServices, exceptionServices, actors] = await Promise.all([
+      recurringServiceIds.length
+        ? DivineLiturgyRecurring.find({
+          _id: { $in: recurringServiceIds },
+        })
+          .select('serviceType dayOfWeek startTime endTime name')
+          .lean()
+        : [],
+      exceptionServiceIds.length
+        ? DivineLiturgyException.find({
+          _id: { $in: exceptionServiceIds },
+        })
+          .select('date startTime endTime name')
+          .lean()
+        : [],
+      actorIds.length
+        ? User.find({
+          _id: { $in: actorIds },
+          isDeleted: { $ne: true },
+        })
+          .select('fullName')
+          .lean()
+        : [],
+    ]);
+
+    const recurringMap = new Map(
+      recurringServices.map((service) => [this._toComparableId(service._id), service])
+    );
+    const exceptionMap = new Map(
+      exceptionServices.map((service) => [this._toComparableId(service._id), service])
+    );
+    const actorMap = new Map(
+      actors.map((actor) => [this._toComparableId(actor._id), actor])
+    );
+
+    return attendanceEntries
+      .map((entry) => {
+        const normalizedEntryType = String(entry?.entryType || '').trim().toLowerCase();
+        const serviceId = this._toComparableId(entry?.serviceId);
+        const recordedById = this._toComparableId(entry?.recordedBy);
+        const updatedById = this._toComparableId(entry?.updatedBy);
+        const service =
+          normalizedEntryType === 'exception'
+            ? this._mapHydratedDivineLiturgyService('exception', serviceId ? exceptionMap.get(serviceId) : null)
+            : this._mapHydratedDivineLiturgyService('recurring', serviceId ? recurringMap.get(serviceId) : null);
+        const recordedBy = recordedById ? actorMap.get(recordedById) : null;
+        const updatedBy = updatedById ? actorMap.get(updatedById) : null;
+
+        return {
+          ...entry,
+          entryType: normalizedEntryType || 'recurring',
+          serviceId,
+          service,
+          recordedBy: recordedById
+            ? {
+              id: recordedById,
+              fullName: recordedBy?.fullName || '',
+            }
+            : null,
+          updatedBy: updatedById
+            ? {
+              id: updatedById,
+              fullName: updatedBy?.fullName || '',
+            }
+            : null,
+        };
+      })
+      .sort((a, b) => {
+        const dateCompare = String(b?.attendanceDate || '').localeCompare(String(a?.attendanceDate || ''));
+        if (dateCompare !== 0) return dateCompare;
+        return new Date(b?.updatedAt || 0).getTime() - new Date(a?.updatedAt || 0).getTime();
+      });
+  }
+
   /**
    * جلب العلاقات العكسية: مستخدمون أضافوا هذا المستخدم في عائلتهم (أب، أم، زوج، إلخ)
    * يُستخدم لعرض "من يرتبط بي من جهة الآخرين" دون تخزين في الكاش
@@ -374,7 +621,11 @@ class UserService {
       }
     }
 
-    const inverseFamily = await this.getInverseFamily(user._id || user.id || userId);
+    const [inverseFamily, meetingAttendance, divineLiturgyAttendance] = await Promise.all([
+      this.getInverseFamily(user._id || user.id || userId),
+      this._hydrateMeetingAttendanceEntries(user.meetingAttendance),
+      this._hydrateDivineLiturgyAttendanceEntries(user.divineLiturgyAttendance),
+    ]);
     let householdClassificationSummary = null;
     try {
       const householdClassificationService = require('../householdClassifications/householdClassification.service');
@@ -384,7 +635,13 @@ class UserService {
       householdClassificationSummary = null;
     }
 
-    return { ...user, inverseFamily, householdClassificationSummary };
+    return {
+      ...user,
+      inverseFamily,
+      meetingAttendance,
+      divineLiturgyAttendance,
+      householdClassificationSummary,
+    };
   }
 
   /**
