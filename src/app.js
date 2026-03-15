@@ -22,6 +22,7 @@ const meetingsRoutes = require('./modules/meetings/meetings.routes');
 const divineLiturgiesRoutes = require('./modules/divineLiturgies/divineLiturgies.routes');
 const notificationsRoutes = require('./modules/notifications/notifications.routes');
 const householdClassificationRoutes = require('./modules/householdClassifications/householdClassification.routes');
+const aidRoutes = require('./modules/aids/aid.routes');
 
 // Swagger
 const { swaggerUi, specs } = require('./docs/swagger');
@@ -95,6 +96,7 @@ app.use('/api/meetings', meetingsRoutes);
 app.use('/api/divine-liturgies', divineLiturgiesRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/household-classifications', householdClassificationRoutes);
+app.use('/api/aids', aidRoutes);
 
 /* ══════════════════ Health Check ══════════════════ */
 

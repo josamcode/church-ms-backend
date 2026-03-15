@@ -320,4 +320,5 @@ module.exports = {
   createHouseholdSeed,
   evaluateHouseholdSnapshot,
   hasActiveMemberFilters,
+  memberMatchesFilters,
 };

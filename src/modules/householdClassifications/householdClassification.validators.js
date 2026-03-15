@@ -97,11 +97,24 @@ const updateHousehold = {
     .messages({ 'object.min': 'At least one household field must be provided.' }),
 };
 
+const searchHouseholds = {
+  body: Joi.object({
+    isLordsBrethren: Joi.boolean().optional(),
+    memberFilters: criterionFiltersSchema.optional(),
+    householdFilters: Joi.object({
+      minMemberCount: Joi.number().integer().min(1).optional(),
+      minTotalIncome: Joi.number().min(0).optional(),
+      maxTotalIncome: Joi.number().min(0).optional(),
+    }).optional(),
+  }),
+};
+
 module.exports = {
   createCategory,
   getHouseholdByName,
   idParam,
   listHouseholds,
+  searchHouseholds,
   updateHousehold,
   updateCategory,
 };

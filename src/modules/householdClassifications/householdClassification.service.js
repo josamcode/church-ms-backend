@@ -18,6 +18,7 @@ const {
   createHouseholdSeed,
   evaluateHouseholdSnapshot,
   hasActiveMemberFilters,
+  memberMatchesFilters,
 } = require('./householdClassification.engine');
 
 function trimString(value) {
@@ -889,6 +890,61 @@ class HouseholdClassificationService {
       profile,
       categoryMap
     );
+  }
+  async searchHouseholds({
+    isLordsBrethren,
+    memberFilters,
+    householdFilters,
+  }) {
+    const { categories, evaluations: allEvaluations } = await this._evaluateAllHouseholds();
+
+    let evaluations = [...allEvaluations];
+
+    // 1. Filter by category
+    if (isLordsBrethren !== undefined) {
+      const targetCategoryIds = new Set(
+        categories.filter(c => c.isLordsBrethren).map(c => String(c._id))
+      );
+      
+      evaluations = evaluations.filter((entry) => {
+        if (!entry.primaryClassification) return false;
+        return targetCategoryIds.has(String(entry.primaryClassification.id));
+      });
+    }
+
+    // 2. Filter by household metrics
+    if (householdFilters) {
+      if (Number.isFinite(householdFilters.minMemberCount)) {
+        evaluations = evaluations.filter(e => e.memberCount >= householdFilters.minMemberCount);
+      }
+      if (Number.isFinite(householdFilters.minTotalIncome)) {
+        evaluations = evaluations.filter(e => e.totalMemberIncome >= householdFilters.minTotalIncome);
+      }
+      if (Number.isFinite(householdFilters.maxTotalIncome)) {
+        evaluations = evaluations.filter(e => e.totalMemberIncome <= householdFilters.maxTotalIncome);
+      }
+    }
+
+    // 3. Filter by member dynamics
+    if (memberFilters && Object.keys(memberFilters).length > 0) {
+      evaluations = evaluations.filter((evaluation) => {
+        return evaluation.members.some((member) => memberMatchesFilters(member, memberFilters));
+      });
+    }
+
+    // Prepare response items mirroring listHouseholds
+    const households = evaluations.map((evaluation) => ({
+      householdKey: evaluation.householdKey,
+      householdName: evaluation.householdName,
+      sourceField: evaluation.sourceField,
+      memberCount: evaluation.memberCount,
+      totalMemberIncome: evaluation.totalMemberIncome,
+      averageMemberIncome: evaluation.averageMemberIncome,
+      primaryClassification: evaluation.primaryClassification || null,
+      matchedCategories: evaluation.matchedCategories || [],
+    }));
+
+    return households;
   }
 }
 

@@ -77,12 +77,28 @@ const updateHousehold = asyncHandler(async (req, res) => {
   });
 });
 
+const searchHouseholds = asyncHandler(async (req, res) => {
+  const { isLordsBrethren, memberFilters, householdFilters } = req.body;
+  
+  const households = await householdClassificationService.searchHouseholds({
+    isLordsBrethren,
+    memberFilters,
+    householdFilters,
+  });
+
+  return ApiResponse.success(res, {
+    message: 'Households searched successfully.',
+    data: households,
+  });
+});
+
 module.exports = {
   createCategory,
   deleteCategory,
   getHouseholdByName,
   listCategories,
   listHouseholds,
+  searchHouseholds,
   updateHousehold,
   updateCategory,
 };

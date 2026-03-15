@@ -57,6 +57,14 @@ router.get(
   householdClassificationController.getHouseholdByName
 );
 
+router.post(
+  '/households/search',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.HOUSEHOLD_CLASSIFICATIONS_VIEW),
+  validate(householdClassificationValidators.searchHouseholds),
+  householdClassificationController.searchHouseholds
+);
+
 router.patch(
   '/households/details',
   authenticateJWT,
