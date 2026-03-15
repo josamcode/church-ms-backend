@@ -243,6 +243,7 @@ class HouseholdClassificationService {
       color: category.color,
       priority: category.priority,
       isDefault: Boolean(category.isDefault),
+      isLordsBrethren: Boolean(category.isLordsBrethren),
       isActive: Boolean(category.isActive),
       isConfigured: Array.isArray(category.criteria) && category.criteria.length > 0,
       count: Number(extra.count) || 0,
@@ -309,6 +310,7 @@ class HouseholdClassificationService {
     const color = trimString(data.color) || '#2563eb';
     const priority = Number.isFinite(Number(data.priority)) ? Number(data.priority) : 100;
     const isActive = data.isActive !== false;
+    const isLordsBrethren = data.isLordsBrethren === true;
     const criteria = Array.isArray(data.criteria)
       ? data.criteria.map((criterion, index) => this._normalizeCriterion(criterion, index))
       : [];
@@ -331,6 +333,7 @@ class HouseholdClassificationService {
       color,
       priority,
       isActive,
+      isLordsBrethren,
       criteria,
       createdBy: actorUserId,
       updatedBy: actorUserId,
@@ -389,6 +392,10 @@ class HouseholdClassificationService {
 
     if (data.isActive !== undefined) {
       category.isActive = Boolean(data.isActive);
+    }
+
+    if (data.isLordsBrethren !== undefined) {
+      category.isLordsBrethren = Boolean(data.isLordsBrethren);
     }
 
     if (Array.isArray(data.criteria)) {
@@ -539,6 +546,7 @@ class HouseholdClassificationService {
     search,
     classificationId,
     includeUnclassified = true,
+    isLordsBrethren,
   }) {
     const { categories, evaluations: allEvaluations } = await this._evaluateAllHouseholds();
     let evaluations = [...allEvaluations];
@@ -557,6 +565,17 @@ class HouseholdClassificationService {
       evaluations = evaluations.filter(
         (entry) => entry.primaryClassification?.id === String(classificationId)
       );
+    }
+
+    if (isLordsBrethren !== undefined) {
+      const lordsBrethrenCats = new Set(
+        categories.filter(c => c.isLordsBrethren).map(c => String(c._id))
+      );
+      
+      evaluations = evaluations.filter((entry) => {
+        if (!entry.primaryClassification) return false;
+        return lordsBrethrenCats.has(String(entry.primaryClassification.id));
+      });
     }
 
     if (!includeUnclassified) {

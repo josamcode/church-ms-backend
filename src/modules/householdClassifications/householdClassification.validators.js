@@ -46,6 +46,7 @@ const categoryBody = Joi.object({
   color: Joi.string().trim().allow('', null).optional(),
   priority: Joi.number().integer().min(0).optional(),
   isActive: Joi.boolean().optional(),
+  isLordsBrethren: Joi.boolean().optional(),
   criteria: Joi.array().items(criterionSchema).optional(),
 });
 
@@ -71,6 +72,7 @@ const listHouseholds = {
     search: Joi.string().trim().allow('', null).optional(),
     classificationId: Joi.string().pattern(OBJECT_ID_PATTERN).optional(),
     includeUnclassified: Joi.boolean().optional(),
+    isLordsBrethren: Joi.boolean().optional(),
   }),
 };
 

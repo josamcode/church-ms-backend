@@ -38,7 +38,7 @@ const deleteCategory = asyncHandler(async (req, res) => {
 });
 
 const listHouseholds = asyncHandler(async (req, res) => {
-  const { page, limit, search, classificationId, includeUnclassified } = req.query;
+  const { page, limit, search, classificationId, includeUnclassified, isLordsBrethren } = req.query;
   const result = await householdClassificationService.listHouseholds({
     page,
     limit,
@@ -46,6 +46,7 @@ const listHouseholds = asyncHandler(async (req, res) => {
     classificationId,
     includeUnclassified:
       includeUnclassified === undefined ? true : String(includeUnclassified) === 'true',
+    isLordsBrethren: isLordsBrethren !== undefined ? String(isLordsBrethren) === 'true' : undefined,
   });
 
   return ApiResponse.success(res, {
