@@ -225,6 +225,35 @@ const updateMeetingMemberNotes = {
   }),
 };
 
+const meetingAttendanceQuery = {
+  params: idParam.params,
+  query: Joi.object({
+    attendanceDate: Joi.string()
+      .trim()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .required()
+      .messages({
+        'string.pattern.base': 'Attendance date must be YYYY-MM-DD',
+        'any.required': 'Attendance date is required',
+      }),
+  }),
+};
+
+const updateMeetingAttendance = {
+  params: idParam.params,
+  body: Joi.object({
+    attendanceDate: Joi.string()
+      .trim()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .required()
+      .messages({
+        'string.pattern.base': 'Attendance date must be YYYY-MM-DD',
+        'any.required': 'Attendance date is required',
+      }),
+    attendedMemberUserIds: Joi.array().items(objectIdField).default([]),
+  }),
+};
+
 module.exports = {
   idParam,
   memberParams,
@@ -240,4 +269,6 @@ module.exports = {
   responsibilitySuggestions,
   servantHistory,
   updateMeetingMemberNotes,
+  meetingAttendanceQuery,
+  updateMeetingAttendance,
 };

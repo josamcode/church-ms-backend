@@ -109,6 +109,36 @@ const changeLogEntrySchema = new mongoose.Schema(
 
 /* ──────────────── Main User Schema ──────────────── */
 
+const meetingAttendanceEntrySchema = new mongoose.Schema(
+  {
+    meetingId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Meeting',
+      required: true,
+    },
+    attendanceDate: {
+      type: String,
+      required: true,
+      trim: true,
+      match: /^\d{4}-\d{2}-\d{2}$/,
+    },
+    recordedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    updatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: true, timestamps: false }
+);
+
 const userSchema = new mongoose.Schema(
   {
     // ═══════ A) معلومات أساسية ═══════
@@ -258,6 +288,7 @@ const userSchema = new mongoose.Schema(
     meetingIds: [
       { type: mongoose.Schema.Types.ObjectId, ref: 'Meeting' },
     ],
+    meetingAttendance: [meetingAttendanceEntrySchema],
 
     // ═══════ G) الحوكمة والمراجعة ═══════
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -298,6 +329,7 @@ userSchema.index({ isDeleted: 1, role: 1 });
 userSchema.index({ 'employment.status': 1 });
 userSchema.index({ 'presence.status': 1 });
 userSchema.index({ 'health.conditions.name': 1 });
+userSchema.index({ 'meetingAttendance.meetingId': 1, 'meetingAttendance.attendanceDate': -1 });
 userSchema.index({ 'father.userId': 1 }, { sparse: true });
 userSchema.index({ 'mother.userId': 1 }, { sparse: true });
 userSchema.index({ 'spouse.userId': 1 }, { sparse: true });

@@ -189,6 +189,85 @@ const meetingMemberNoteSchema = new mongoose.Schema(
   { _id: true }
 );
 
+const meetingAttendanceRecordSchema = new mongoose.Schema(
+  {
+    attendanceDate: {
+      type: String,
+      required: true,
+      trim: true,
+      match: /^\d{4}-\d{2}-\d{2}$/,
+    },
+    attendedMemberUserIds: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: 'User',
+      default: [],
+    },
+    recordedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    updatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: true }
+);
+
+const meetingAttendanceAuditEntrySchema = new mongoose.Schema(
+  {
+    attendanceDate: {
+      type: String,
+      required: true,
+      trim: true,
+      match: /^\d{4}-\d{2}-\d{2}$/,
+    },
+    actorUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    accessLevel: {
+      type: String,
+      enum: ['full', 'servant', 'member'],
+      required: true,
+    },
+    scopedMemberUserIds: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: 'User',
+      default: [],
+    },
+    previousAttendedMemberUserIds: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: 'User',
+      default: [],
+    },
+    attendedMemberUserIds: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: 'User',
+      default: [],
+    },
+    groupNames: {
+      type: [String],
+      default: [],
+    },
+    action: {
+      type: String,
+      default: 'attendance_check_in_saved',
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: true }
+);
+
 const meetingSchema = new mongoose.Schema(
   {
     sectorId: {
@@ -261,6 +340,14 @@ const meetingSchema = new mongoose.Schema(
     },
     memberNotes: {
       type: [meetingMemberNoteSchema],
+      default: [],
+    },
+    attendanceRecords: {
+      type: [meetingAttendanceRecordSchema],
+      default: [],
+    },
+    attendanceAuditLog: {
+      type: [meetingAttendanceAuditEntrySchema],
       default: [],
     },
     notes: {
@@ -394,6 +481,8 @@ meetingSchema.pre('validate', function (next) {
 
 meetingSchema.index({ isDeleted: 1, sectorId: 1, day: 1, time: 1, name: 1 });
 meetingSchema.index({ isDeleted: 1, createdAt: -1 });
+meetingSchema.index({ 'attendanceRecords.attendanceDate': 1 });
+meetingSchema.index({ 'attendanceAuditLog.attendanceDate': 1, 'attendanceAuditLog.actorUserId': 1 });
 meetingSchema.index({ 'servants.userId': 1, createdAt: -1 });
 meetingSchema.index({ 'servants.normalizedName': 1, createdAt: -1 });
 

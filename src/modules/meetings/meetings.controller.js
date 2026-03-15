@@ -120,6 +120,35 @@ const updateMeetingMemberNotes = asyncHandler(async (req, res) => {
   });
 });
 
+const getMeetingAttendance = asyncHandler(async (req, res) => {
+  const attendance = await meetingsService.getMeetingAttendance(req.params.id, req.query.attendanceDate, {
+    actorUserId: req.user.id,
+    userPermissions: req.userPermissions || [],
+  });
+
+  return ApiResponse.success(res, {
+    message: 'Meeting attendance loaded successfully',
+    data: attendance,
+  });
+});
+
+const updateMeetingAttendance = asyncHandler(async (req, res) => {
+  const attendance = await meetingsService.updateMeetingAttendance(
+    req.params.id,
+    req.body.attendanceDate,
+    req.body.attendedMemberUserIds,
+    {
+      actorUserId: req.user.id,
+      userPermissions: req.userPermissions || [],
+    }
+  );
+
+  return ApiResponse.success(res, {
+    message: 'Meeting attendance saved successfully',
+    data: attendance,
+  });
+});
+
 const updateMeetingBasic = asyncHandler(async (req, res) => {
   const meeting = await meetingsService.updateMeetingBasic(req.params.id, req.body, req.user.id);
   return ApiResponse.success(res, {
@@ -228,5 +257,7 @@ module.exports = {
   listResponsibilitySuggestions,
   getServantHistory,
   getMeetingMemberById,
+  getMeetingAttendance,
+  updateMeetingAttendance,
   updateMeetingMemberNotes,
 };

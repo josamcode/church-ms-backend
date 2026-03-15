@@ -141,6 +141,30 @@ router.patch(
 );
 
 router.get(
+  '/:id/attendance',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.MEETINGS_ATTENDANCE_MANAGE,
+    PERMISSIONS.MEETINGS_UPDATE,
+    PERMISSIONS.MEETINGS_SERVANTS_MANAGE
+  ),
+  validate(meetingsValidators.meetingAttendanceQuery),
+  meetingsController.getMeetingAttendance
+);
+
+router.put(
+  '/:id/attendance',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.MEETINGS_ATTENDANCE_MANAGE,
+    PERMISSIONS.MEETINGS_UPDATE,
+    PERMISSIONS.MEETINGS_SERVANTS_MANAGE
+  ),
+  validate(meetingsValidators.updateMeetingAttendance),
+  meetingsController.updateMeetingAttendance
+);
+
+router.get(
   '/:id',
   authenticateJWT,
   authorizeAnyPermissions(

@@ -2,6 +2,8 @@ const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
 const { buildPaginationMeta } = require('../../utils/pagination');
 const { PERMISSIONS } = require('../../constants/permissions');
+const redisClient = require('../../config/redis');
+const { CACHE_KEYS } = require('../../constants/cacheKeys');
 const cloudinary = require('../../config/cloudinary');
 const config = require('../../config/env');
 const logger = require('../../utils/logger');
@@ -34,12 +36,97 @@ class MeetingsService {
     return [...new Set(values.map((entry) => this._normalizeText(entry)).filter(Boolean))];
   }
 
+  _padNumber(value) {
+    return String(value).padStart(2, '0');
+  }
+
+  _buildLocalDateKey(date = new Date()) {
+    return `${date.getFullYear()}-${this._padNumber(date.getMonth() + 1)}-${this._padNumber(date.getDate())}`;
+  }
+
+  _normalizeAttendanceDate(value) {
+    const normalizedValue = this._normalizeText(value);
+    const matched = normalizedValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!matched) {
+      throw ApiError.badRequest('Attendance date must be YYYY-MM-DD', 'VALIDATION_ERROR');
+    }
+
+    const year = Number(matched[1]);
+    const month = Number(matched[2]);
+    const day = Number(matched[3]);
+    const parsedDate = new Date(Date.UTC(year, month - 1, day));
+    const isValid =
+      parsedDate.getUTCFullYear() === year &&
+      parsedDate.getUTCMonth() + 1 === month &&
+      parsedDate.getUTCDate() === day;
+
+    if (!isValid) {
+      throw ApiError.badRequest('Attendance date is invalid', 'VALIDATION_ERROR');
+    }
+
+    return {
+      dateKey: normalizedValue,
+      dayOfWeek: parsedDate.getUTCDay(),
+    };
+  }
+
+  _getWeekdayFromMeetingDay(day) {
+    const weekdayMap = {
+      Sunday: 0,
+      Monday: 1,
+      Tuesday: 2,
+      Wednesday: 3,
+      Thursday: 4,
+      Friday: 5,
+      Saturday: 6,
+    };
+
+    return weekdayMap[this._normalizeText(day)] ?? null;
+  }
+
+  _assertAttendanceDateAllowed(meetingDay, attendanceDate) {
+    const { dateKey, dayOfWeek } = this._normalizeAttendanceDate(attendanceDate);
+    const meetingWeekday = this._getWeekdayFromMeetingDay(meetingDay);
+
+    if (meetingWeekday == null || meetingWeekday !== dayOfWeek) {
+      throw ApiError.badRequest(
+        'Attendance date must match the meeting day',
+        'VALIDATION_ERROR'
+      );
+    }
+
+    if (dateKey >= this._buildLocalDateKey()) {
+      throw ApiError.badRequest(
+        'Attendance date must be a past meeting date',
+        'VALIDATION_ERROR'
+      );
+    }
+
+    return dateKey;
+  }
+
   _hasPermission(permissions = [], permission) {
     return Array.isArray(permissions) && permissions.includes(permission);
   }
 
   _hasAnyPermission(permissions = [], requiredPermissions = []) {
     return (requiredPermissions || []).some((permission) => this._hasPermission(permissions, permission));
+  }
+
+  async _clearUserCaches(userIds = []) {
+    const uniqueUserIds = [...new Set((userIds || []).map((value) => this._toId(value)).filter(Boolean))];
+    if (!uniqueUserIds.length) return;
+
+    await Promise.all(
+      uniqueUserIds.map(async (userId) => {
+        try {
+          await redisClient.del(CACHE_KEYS.USER_PROFILE(userId));
+          await redisClient.del(CACHE_KEYS.USER_PERMISSIONS(userId));
+        } catch (error) {
+          logger.warn(`Failed to clear user cache for ${userId}: ${error.message}`);
+        }
+      })
+    );
   }
 
   _buildOwnMeetingsFilter(actorUserId) {
@@ -1265,6 +1352,24 @@ class MeetingsService {
     return meeting;
   }
 
+  async _getMeetingForAttendance(meetingId, { lean = true } = {}) {
+    let query = Meeting.findOne({
+      _id: this._toObjectId(meetingId),
+      isDeleted: { $ne: true },
+    }).select(
+      'name day time createdAt groups serviceSecretary assistantSecretaries servants servedUserIds groupAssignments attendanceRecords attendanceAuditLog updatedBy'
+    );
+    if (lean) query = query.lean();
+
+    const meeting = await query;
+
+    if (!meeting) {
+      throw ApiError.notFound('Meeting was not found', 'RESOURCE_NOT_FOUND');
+    }
+
+    return meeting;
+  }
+
   _resolveScopedMemberIds(meeting, accessContext) {
     if (accessContext?.accessLevel === 'servant') {
       return this._getServantScope(meeting, accessContext.servantEntry).scopedMemberIds;
@@ -1314,6 +1419,14 @@ class MeetingsService {
   _canUpdateMeetingMemberNote(userPermissions = []) {
     return (
       this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_MEMBERS_NOTES_UPDATE) ||
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_UPDATE) ||
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_SERVANTS_MANAGE)
+    );
+  }
+
+  _canManageMeetingAttendance(userPermissions = []) {
+    return (
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_ATTENDANCE_MANAGE) ||
       this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_UPDATE) ||
       this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_SERVANTS_MANAGE)
     );
@@ -1377,6 +1490,100 @@ class MeetingsService {
         updatedAt: entry?.updatedAt || null,
       };
     });
+  }
+
+  _extractMeetingAttendanceRecord(meeting, attendanceDate) {
+    const targetDateKey = this._normalizeText(attendanceDate);
+    if (!targetDateKey) return null;
+
+    return (
+      (meeting?.attendanceRecords || []).find(
+        (entry) => this._normalizeText(entry?.attendanceDate) === targetDateKey
+      ) || null
+    );
+  }
+
+  _extractMeetingAttendanceAuditEntries(meeting, attendanceDate) {
+    const targetDateKey = this._normalizeText(attendanceDate);
+    if (!targetDateKey) return [];
+
+    return (meeting?.attendanceAuditLog || [])
+      .filter((entry) => this._normalizeText(entry?.attendanceDate) === targetDateKey)
+      .sort((a, b) => {
+        const aTime = new Date(a?.createdAt || 0).getTime();
+        const bTime = new Date(b?.createdAt || 0).getTime();
+        return bTime - aTime;
+      });
+  }
+
+  _extractViewerAttendanceAuditEntry(meeting, attendanceDate, actorUserId) {
+    const normalizedActorId = this._toId(actorUserId);
+    if (!normalizedActorId) return null;
+
+    return (
+      this._extractMeetingAttendanceAuditEntries(meeting, attendanceDate).find(
+        (entry) => this._toId(entry?.actorUserId) === normalizedActorId
+      ) || null
+    );
+  }
+
+  _resolveAttendanceAuditGroupNames(meeting, accessContext) {
+    if (accessContext?.accessLevel === 'servant') {
+      return [...(this._getServantScope(meeting, accessContext.servantEntry).groupNames || new Set())];
+    }
+
+    return this._normalizeUniqueStrings([
+      ...(meeting?.groups || []),
+      ...((meeting?.groupAssignments || []).map((assignment) => assignment?.group)),
+      ...(meeting?.servants || []).flatMap((servant) =>
+        (servant?.groupAssignments || []).map((assignment) => assignment?.group)
+      ),
+    ]);
+  }
+
+  async _mapMeetingAttendanceRecord(
+    record,
+    attendanceDate,
+    scopedMemberIds = new Set(),
+    viewerAuditEntry = null
+  ) {
+    const updatedById = this._toId(record?.updatedBy || record?.recordedBy);
+    const viewerUpdatedById = this._toId(viewerAuditEntry?.actorUserId);
+    const userIdsToLoad = [...new Set([updatedById, viewerUpdatedById].filter(Boolean))];
+    const usersMap = userIdsToLoad.length > 0 ? await this._buildUserMap(userIdsToLoad) : new Map();
+    const updatedByUser = updatedById ? usersMap.get(updatedById) : null;
+    const viewerUpdatedByUser = viewerUpdatedById ? usersMap.get(viewerUpdatedById) : null;
+
+    return {
+      attendanceDate,
+      attendedMemberUserIds: [...new Set(
+        (record?.attendedMemberUserIds || [])
+          .map((value) => this._toId(value))
+          .filter((id) => id && (!scopedMemberIds.size || scopedMemberIds.has(id)))
+      )],
+      recordUpdatedAt: record?.updatedAt || null,
+      recordUpdatedBy: updatedById
+        ? {
+            id: updatedById,
+            fullName: updatedByUser?.fullName || '',
+          }
+        : null,
+      updatedAt: record?.updatedAt || null,
+      updatedBy: updatedById
+        ? {
+            id: updatedById,
+            fullName: updatedByUser?.fullName || '',
+          }
+        : null,
+      viewerUpdatedAt: viewerAuditEntry?.createdAt || null,
+      viewerUpdatedBy: viewerUpdatedById
+        ? {
+            id: viewerUpdatedById,
+            fullName: viewerUpdatedByUser?.fullName || '',
+          }
+        : null,
+      canManageAttendance: true,
+    };
   }
 
   async getMeetingMemberById(meetingId, memberId, { actorUserId, userPermissions = [] } = {}) {
@@ -1496,6 +1703,233 @@ class MeetingsService {
       noteHistory,
       canEditNote: true,
     });
+  }
+
+  async getMeetingAttendance(
+    meetingId,
+    attendanceDate,
+    { actorUserId, userPermissions = [] } = {}
+  ) {
+    if (!this._canManageMeetingAttendance(userPermissions)) {
+      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+    }
+
+    const meeting = await this._getMeetingForAttendance(meetingId);
+    const accessContext = this._resolveMeetingAccess({
+      meeting,
+      actorUserId,
+      userPermissions,
+    });
+
+    if (!accessContext.allowed) {
+      throw ApiError.forbidden('You are not allowed to access this meeting', 'PERMISSION_DENIED');
+    }
+    if (accessContext.accessLevel === 'member') {
+      throw ApiError.forbidden(
+        'You are not allowed to access meeting attendance',
+        'PERMISSION_DENIED'
+      );
+    }
+
+    const normalizedAttendanceDate = this._assertAttendanceDateAllowed(meeting.day, attendanceDate);
+    const scopedMemberIds = this._resolveScopedMemberIds(meeting, accessContext);
+    const record = this._extractMeetingAttendanceRecord(meeting, normalizedAttendanceDate);
+    const viewerAuditEntry = this._extractViewerAttendanceAuditEntry(
+      meeting,
+      normalizedAttendanceDate,
+      actorUserId
+    );
+
+    return this._mapMeetingAttendanceRecord(
+      record,
+      normalizedAttendanceDate,
+      scopedMemberIds,
+      viewerAuditEntry
+    );
+  }
+
+  async updateMeetingAttendance(
+    meetingId,
+    attendanceDate,
+    attendedMemberUserIds = [],
+    { actorUserId, userPermissions = [] } = {}
+  ) {
+    if (!this._canManageMeetingAttendance(userPermissions)) {
+      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+    }
+
+    const meeting = await this._getMeetingForAttendance(meetingId, { lean: false });
+    const accessContext = this._resolveMeetingAccess({
+      meeting,
+      actorUserId,
+      userPermissions,
+    });
+
+    if (!accessContext.allowed) {
+      throw ApiError.forbidden('You are not allowed to access this meeting', 'PERMISSION_DENIED');
+    }
+    if (accessContext.accessLevel === 'member') {
+      throw ApiError.forbidden(
+        'You are not allowed to update meeting attendance',
+        'PERMISSION_DENIED'
+      );
+    }
+
+    const normalizedAttendanceDate = this._assertAttendanceDateAllowed(meeting.day, attendanceDate);
+    const scopedMemberIds = this._resolveScopedMemberIds(meeting, accessContext);
+    const scopedMemberIdsList = [...scopedMemberIds];
+    const selectedScopedMemberIds = [...new Set(
+      (attendedMemberUserIds || [])
+        .map((value) => this._toId(value))
+        .filter(Boolean)
+    )];
+
+    const hasOutOfScopeSelection = selectedScopedMemberIds.some((memberId) => !scopedMemberIds.has(memberId));
+    if (hasOutOfScopeSelection) {
+      throw ApiError.forbidden(
+        'You are not allowed to update attendance for this member',
+        'PERMISSION_DENIED'
+      );
+    }
+
+    const actorObjectId = this._toObjectId(actorUserId, 'actorUserId');
+    const meetingObjectId = this._toObjectId(meetingId, 'meetingId');
+    const now = new Date();
+    const recordIndex = (meeting.attendanceRecords || []).findIndex(
+      (entry) => this._normalizeText(entry?.attendanceDate) === normalizedAttendanceDate
+    );
+    const existingRecord = recordIndex >= 0 ? meeting.attendanceRecords[recordIndex] : null;
+    const mergedAttendeeIds = new Set(
+      (existingRecord?.attendedMemberUserIds || []).map((value) => this._toId(value)).filter(Boolean)
+    );
+    const previousScopedAttendedMemberIds = [...new Set(
+      (existingRecord?.attendedMemberUserIds || [])
+        .map((value) => this._toId(value))
+        .filter((memberId) => memberId && scopedMemberIds.has(memberId))
+    )];
+
+    scopedMemberIdsList.forEach((memberId) => mergedAttendeeIds.delete(memberId));
+    selectedScopedMemberIds.forEach((memberId) => mergedAttendeeIds.add(memberId));
+
+    if (mergedAttendeeIds.size === 0) {
+      if (recordIndex >= 0) {
+        meeting.attendanceRecords.splice(recordIndex, 1);
+      }
+    } else if (recordIndex >= 0) {
+      meeting.attendanceRecords[recordIndex].attendanceDate = normalizedAttendanceDate;
+      meeting.attendanceRecords[recordIndex].attendedMemberUserIds = [...mergedAttendeeIds].map((memberId) =>
+        this._toObjectId(memberId, 'attendedMemberUserIds')
+      );
+      meeting.attendanceRecords[recordIndex].updatedBy = actorObjectId;
+      meeting.attendanceRecords[recordIndex].updatedAt = now;
+    } else {
+      meeting.attendanceRecords.push({
+        attendanceDate: normalizedAttendanceDate,
+        attendedMemberUserIds: [...mergedAttendeeIds].map((memberId) =>
+          this._toObjectId(memberId, 'attendedMemberUserIds')
+        ),
+        recordedBy: actorObjectId,
+        updatedBy: actorObjectId,
+        updatedAt: now,
+      });
+    }
+
+    meeting.attendanceAuditLog = meeting.attendanceAuditLog || [];
+    meeting.attendanceAuditLog.push({
+      attendanceDate: normalizedAttendanceDate,
+      actorUserId: actorObjectId,
+      accessLevel: accessContext.accessLevel,
+      scopedMemberUserIds: scopedMemberIdsList.map((memberId) =>
+        this._toObjectId(memberId, 'memberId')
+      ),
+      previousAttendedMemberUserIds: previousScopedAttendedMemberIds.map((memberId) =>
+        this._toObjectId(memberId, 'memberId')
+      ),
+      attendedMemberUserIds: selectedScopedMemberIds.map((memberId) =>
+        this._toObjectId(memberId, 'memberId')
+      ),
+      groupNames: this._resolveAttendanceAuditGroupNames(meeting, accessContext),
+      action: 'attendance_check_in_saved',
+      createdAt: now,
+    });
+
+    meeting.updatedBy = actorObjectId;
+    await meeting.save();
+
+    if (scopedMemberIdsList.length > 0) {
+      const scopedMemberObjectIds = scopedMemberIdsList.map((memberId) =>
+        this._toObjectId(memberId, 'memberId')
+      );
+
+      await User.updateMany(
+        {
+          _id: { $in: scopedMemberObjectIds },
+          isDeleted: { $ne: true },
+        },
+        {
+          $pull: {
+            meetingAttendance: {
+              meetingId: meetingObjectId,
+              attendanceDate: normalizedAttendanceDate,
+            },
+          },
+          $set: {
+            updatedBy: actorObjectId,
+          },
+        }
+      );
+
+      if (selectedScopedMemberIds.length > 0) {
+        await User.updateMany(
+          {
+            _id: {
+              $in: selectedScopedMemberIds.map((memberId) => this._toObjectId(memberId, 'memberId')),
+            },
+            isDeleted: { $ne: true },
+          },
+          {
+            $push: {
+              meetingAttendance: {
+                meetingId: meetingObjectId,
+                attendanceDate: normalizedAttendanceDate,
+                recordedBy: actorObjectId,
+                updatedBy: actorObjectId,
+                updatedAt: now,
+              },
+            },
+            $set: {
+              updatedBy: actorObjectId,
+            },
+          }
+        );
+      }
+
+      await this._clearUserCaches(scopedMemberIdsList);
+    }
+
+    const actorUserMap = await this._buildUserMap([actorUserId]);
+    const actorUser = actorUserMap.get(this._toId(actorUserId));
+
+    return {
+      attendanceDate: normalizedAttendanceDate,
+      attendedMemberUserIds: selectedScopedMemberIds,
+      recordUpdatedAt: now,
+      recordUpdatedBy: {
+        id: this._toId(actorUserId),
+        fullName: actorUser?.fullName || '',
+      },
+      updatedAt: now,
+      updatedBy: {
+        id: this._toId(actorUserId),
+        fullName: actorUser?.fullName || '',
+      },
+      viewerUpdatedAt: now,
+      viewerUpdatedBy: {
+        id: this._toId(actorUserId),
+        fullName: actorUser?.fullName || '',
+      },
+      canManageAttendance: true,
+    };
   }
 
   async updateMeetingBasic(id, payload, actorUserId) {
