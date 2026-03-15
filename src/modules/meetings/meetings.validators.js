@@ -1,5 +1,7 @@
 const Joi = require('joi');
 const { ACTIVITY_TYPES } = require('./meeting.model');
+const { MEETING_DOCUMENTATION_FIELD_TYPES } = require('./meetingDocumentationConfig.model');
+const { MEETING_DOCUMENTATION_ASSET_KINDS } = require('./meetingDocumentation.model');
 
 const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -10,6 +12,18 @@ const avatarSchema = Joi.object({
   url: Joi.string().uri().required(),
   publicId: Joi.string().trim().allow('', null).optional(),
 }).optional();
+
+const documentationAssetSchema = Joi.object({
+  url: Joi.string().uri().required(),
+  publicId: Joi.string().trim().allow('', null).optional(),
+  originalName: Joi.string().trim().max(260).allow('', null).optional(),
+  mimeType: Joi.string().trim().max(160).allow('', null).optional(),
+  kind: Joi.string()
+    .valid(...MEETING_DOCUMENTATION_ASSET_KINDS)
+    .required(),
+  resourceType: Joi.string().valid('image', 'video', 'raw').required(),
+  bytes: Joi.number().integer().min(0).optional(),
+});
 
 const personLinkSchema = Joi.object({
   userId: objectIdField.optional(),
@@ -254,6 +268,62 @@ const updateMeetingAttendance = {
   }),
 };
 
+const meetingDocumentationQuery = {
+  params: idParam.params,
+  query: Joi.object({
+    documentationDate: Joi.string()
+      .trim()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .required()
+      .messages({
+        'string.pattern.base': 'Documentation date must be YYYY-MM-DD',
+        'any.required': 'Documentation date is required',
+      }),
+  }),
+};
+
+const meetingDocumentationFieldResponseSchema = Joi.object({
+  fieldId: objectIdField.required(),
+  textValue: Joi.string().trim().max(4000).allow('', null).optional(),
+  numberValue: Joi.number().optional(),
+  assets: Joi.array().items(documentationAssetSchema).default([]),
+});
+
+const updateMeetingDocumentation = {
+  params: idParam.params,
+  body: Joi.object({
+    documentationDate: Joi.string()
+      .trim()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .required()
+      .messages({
+        'string.pattern.base': 'Documentation date must be YYYY-MM-DD',
+        'any.required': 'Documentation date is required',
+      }),
+    notes: Joi.string().trim().max(4000).allow('', null).optional(),
+    attachments: Joi.array().items(documentationAssetSchema).default([]),
+    fieldResponses: Joi.array().items(meetingDocumentationFieldResponseSchema).default([]),
+  }),
+};
+
+const documentationSettingsFieldSchema = Joi.object({
+  id: objectIdField.optional(),
+  label: Joi.string().trim().min(1).max(160).required(),
+  type: Joi.string()
+    .valid(...MEETING_DOCUMENTATION_FIELD_TYPES)
+    .required(),
+  required: Joi.boolean().default(false),
+  placeholder: Joi.string().trim().max(200).allow('', null).optional(),
+  helpText: Joi.string().trim().max(500).allow('', null).optional(),
+  isActive: Joi.boolean().default(true),
+});
+
+const updateMeetingDocumentationSettings = {
+  body: Joi.object({
+    fields: Joi.array().items(documentationSettingsFieldSchema).max(50).required(),
+  }),
+};
+
 module.exports = {
   idParam,
   memberParams,
@@ -271,4 +341,7 @@ module.exports = {
   updateMeetingMemberNotes,
   meetingAttendanceQuery,
   updateMeetingAttendance,
+  meetingDocumentationQuery,
+  updateMeetingDocumentation,
+  updateMeetingDocumentationSettings,
 };

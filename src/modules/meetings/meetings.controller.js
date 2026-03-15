@@ -149,6 +149,70 @@ const updateMeetingAttendance = asyncHandler(async (req, res) => {
   });
 });
 
+const getMeetingDocumentationSettings = asyncHandler(async (req, res) => {
+  const settings = await meetingsService.getMeetingDocumentationSettings({
+    userPermissions: req.userPermissions || [],
+    includeInactive: req.query.includeInactive !== 'false',
+  });
+
+  return ApiResponse.success(res, {
+    message: 'Meeting documentation settings loaded successfully',
+    data: settings,
+  });
+});
+
+const updateMeetingDocumentationSettings = asyncHandler(async (req, res) => {
+  const settings = await meetingsService.updateMeetingDocumentationSettings(req.body.fields, {
+    actorUserId: req.user.id,
+    userPermissions: req.userPermissions || [],
+  });
+
+  return ApiResponse.success(res, {
+    message: 'Meeting documentation settings saved successfully',
+    data: settings,
+  });
+});
+
+const uploadMeetingDocumentationAsset = asyncHandler(async (req, res) => {
+  const asset = await meetingsService.uploadDocumentationAssetToCloudinary(req.file);
+  return ApiResponse.success(res, {
+    message: 'Meeting documentation asset uploaded successfully',
+    data: asset,
+  });
+});
+
+const getMeetingDocumentation = asyncHandler(async (req, res) => {
+  const documentation = await meetingsService.getMeetingDocumentation(
+    req.params.id,
+    req.query.documentationDate,
+    {
+      actorUserId: req.user.id,
+      userPermissions: req.userPermissions || [],
+    }
+  );
+
+  return ApiResponse.success(res, {
+    message: 'Meeting documentation loaded successfully',
+    data: documentation,
+  });
+});
+
+const updateMeetingDocumentation = asyncHandler(async (req, res) => {
+  const documentation = await meetingsService.updateMeetingDocumentation(
+    req.params.id,
+    req.body,
+    {
+      actorUserId: req.user.id,
+      userPermissions: req.userPermissions || [],
+    }
+  );
+
+  return ApiResponse.success(res, {
+    message: 'Meeting documentation saved successfully',
+    data: documentation,
+  });
+});
+
 const updateMeetingBasic = asyncHandler(async (req, res) => {
   const meeting = await meetingsService.updateMeetingBasic(req.params.id, req.body, req.user.id);
   return ApiResponse.success(res, {
@@ -246,6 +310,7 @@ module.exports = {
   deleteSector,
   uploadSectorAvatarImage,
   uploadMeetingAvatarImage,
+  uploadMeetingDocumentationAsset,
   createMeeting,
   listMeetings,
   getMeetingById,
@@ -259,5 +324,9 @@ module.exports = {
   getMeetingMemberById,
   getMeetingAttendance,
   updateMeetingAttendance,
+  getMeetingDocumentationSettings,
+  updateMeetingDocumentationSettings,
+  getMeetingDocumentation,
+  updateMeetingDocumentation,
   updateMeetingMemberNotes,
 };

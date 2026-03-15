@@ -12,6 +12,14 @@ const User = require('../users/user.model');
 const Sector = require('./sector.model');
 const Meeting = require('./meeting.model');
 const MeetingResponsibility = require('./meetingResponsibility.model');
+const MeetingDocumentation = require('./meetingDocumentation.model');
+const {
+  MEETING_DOCUMENTATION_ASSET_KINDS,
+} = require('./meetingDocumentation.model');
+const {
+  MEETING_DOCUMENTATION_FIELD_TYPES,
+  getOrCreateMeetingDocumentationConfig,
+} = require('./meetingDocumentationConfig.model');
 
 class MeetingsService {
   _toObjectId(id, fieldName = 'id') {
@@ -84,20 +92,20 @@ class MeetingsService {
     return weekdayMap[this._normalizeText(day)] ?? null;
   }
 
-  _assertAttendanceDateAllowed(meetingDay, attendanceDate) {
-    const { dateKey, dayOfWeek } = this._normalizeAttendanceDate(attendanceDate);
+  _assertPastMeetingDateAllowed(meetingDay, rawDate, label = 'Date') {
+    const { dateKey, dayOfWeek } = this._normalizeAttendanceDate(rawDate);
     const meetingWeekday = this._getWeekdayFromMeetingDay(meetingDay);
 
     if (meetingWeekday == null || meetingWeekday !== dayOfWeek) {
       throw ApiError.badRequest(
-        'Attendance date must match the meeting day',
+        `${label} must match the meeting day`,
         'VALIDATION_ERROR'
       );
     }
 
     if (dateKey >= this._buildLocalDateKey()) {
       throw ApiError.badRequest(
-        'Attendance date must be a past meeting date',
+        `${label} must be a past meeting date`,
         'VALIDATION_ERROR'
       );
     }
@@ -1028,6 +1036,86 @@ class MeetingsService {
     return { url: result.secure_url, publicId: result.public_id };
   }
 
+  _resolveDocumentationAssetUploadConfig(file) {
+    const mimeType = this._normalizeText(file?.mimetype).toLowerCase();
+
+    if (config.upload.allowedImageTypes.includes(mimeType)) {
+      return {
+        kind: 'image',
+        resourceType: 'image',
+        folder: 'church/meeting-documentation/images',
+      };
+    }
+
+    if ((config.upload.allowedVideoTypes || []).includes(mimeType)) {
+      return {
+        kind: 'video',
+        resourceType: 'video',
+        folder: 'church/meeting-documentation/videos',
+      };
+    }
+
+    if ((config.upload.allowedDocumentTypes || []).includes(mimeType)) {
+      return {
+        kind: 'document',
+        resourceType: 'raw',
+        folder: 'church/meeting-documentation/documents',
+      };
+    }
+
+    throw ApiError.badRequest(
+      'Unsupported file type. Allowed: images, PDF, DOC, DOCX, TXT, MP4, MOV, WEBM',
+      'UPLOAD_INVALID_TYPE'
+    );
+  }
+
+  async uploadDocumentationAssetToCloudinary(file) {
+    if (!file) {
+      throw ApiError.badRequest('Please choose a file', 'UPLOAD_FAILED');
+    }
+
+    if (file.size > config.upload.maxDocumentationFileSize) {
+      throw ApiError.badRequest(
+        `File exceeds size limit (${Math.round(config.upload.maxDocumentationFileSize / 1024 / 1024)} MB)`,
+        'UPLOAD_FILE_TOO_LARGE'
+      );
+    }
+
+    const uploadConfig = this._resolveDocumentationAssetUploadConfig(file);
+
+    const result = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: uploadConfig.folder,
+          resource_type: uploadConfig.resourceType,
+          use_filename: true,
+          unique_filename: true,
+        },
+        (error, uploadResult) => {
+          if (error) {
+            logger.error(`Meeting documentation upload error: ${error.message}`);
+            reject(ApiError.internal('Failed to upload documentation file'));
+            return;
+          }
+
+          resolve(uploadResult);
+        }
+      );
+
+      streamifier.createReadStream(file.buffer).pipe(uploadStream);
+    });
+
+    return {
+      url: result.secure_url,
+      publicId: result.public_id,
+      originalName: file.originalname || '',
+      mimeType: file.mimetype || '',
+      kind: uploadConfig.kind,
+      resourceType: uploadConfig.resourceType,
+      bytes: file.size || 0,
+    };
+  }
+
   async createSector(payload, actorUserId) {
     const userIds = this._extractPayloadUserIds(payload);
     const userMap = await this._buildUserMap(userIds);
@@ -1432,6 +1520,21 @@ class MeetingsService {
     );
   }
 
+  _canManageMeetingDocumentation(userPermissions = []) {
+    return (
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_DOCUMENTATION_MANAGE) ||
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_UPDATE) ||
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_SERVANTS_MANAGE)
+    );
+  }
+
+  _canManageMeetingDocumentationSettings(userPermissions = []) {
+    return (
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_SETTINGS_MANAGE) ||
+      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_UPDATE)
+    );
+  }
+
   _extractMeetingMemberNotes(meeting, memberId) {
     const normalizedMemberId = this._toId(memberId);
     if (!normalizedMemberId) return [];
@@ -1586,6 +1689,397 @@ class MeetingsService {
     };
   }
 
+  _mapMeetingDocumentationAsset(asset) {
+    if (!asset) return null;
+
+    return {
+      url: asset.url || '',
+      publicId: asset.publicId || '',
+      originalName: asset.originalName || '',
+      mimeType: asset.mimeType || '',
+      kind: asset.kind || '',
+      resourceType: asset.resourceType || '',
+      bytes: Number(asset.bytes) || 0,
+    };
+  }
+
+  _mapMeetingDocumentationFieldResponse(response) {
+    if (!response) return null;
+
+    return {
+      fieldId: this._toId(response.fieldId),
+      fieldLabel: response.fieldLabel || '',
+      fieldType: response.fieldType || 'text',
+      textValue: response.textValue || '',
+      numberValue:
+        typeof response.numberValue === 'number' && Number.isFinite(response.numberValue)
+          ? response.numberValue
+          : null,
+      assets: (response.assets || [])
+        .map((asset) => this._mapMeetingDocumentationAsset(asset))
+        .filter(Boolean),
+    };
+  }
+
+  _mapMeetingDocumentationSettingsField(field) {
+    return {
+      id: this._toId(field?._id),
+      label: field?.label || '',
+      type: field?.type || 'text',
+      required: Boolean(field?.required),
+      placeholder: field?.placeholder || '',
+      helpText: field?.helpText || '',
+      isActive: field?.isActive !== false,
+      sortOrder: Number.isFinite(field?.sortOrder) ? field.sortOrder : 0,
+    };
+  }
+
+  _normalizeMeetingDocumentationSettingsFields(fields = []) {
+    return (fields || []).map((field, index) => {
+      const label = this._normalizeText(field?.label);
+      if (!label) {
+        throw ApiError.badRequest('Documentation field label is required', 'VALIDATION_ERROR');
+      }
+
+      const type = this._normalizeText(field?.type);
+      if (!MEETING_DOCUMENTATION_FIELD_TYPES.includes(type)) {
+        throw ApiError.badRequest('Documentation field type is invalid', 'VALIDATION_ERROR');
+      }
+
+      return {
+        _id:
+          field?.id && mongoose.Types.ObjectId.isValid(field.id)
+            ? this._toObjectId(field.id, 'fieldId')
+            : new mongoose.Types.ObjectId(),
+        label,
+        type,
+        required: Boolean(field?.required),
+        placeholder: this._normalizeText(field?.placeholder) || undefined,
+        helpText: this._normalizeText(field?.helpText) || undefined,
+        isActive: field?.isActive !== false,
+        sortOrder: index,
+      };
+    });
+  }
+
+  _normalizeMeetingDocumentationAssets(assets = [], expectedKind = null) {
+    return [...new Map(
+      (assets || []).map((asset) => {
+        const url = this._normalizeText(asset?.url);
+        const publicId = this._normalizeText(asset?.publicId);
+        const originalName = this._normalizeText(asset?.originalName);
+        const mimeType = this._normalizeText(asset?.mimeType);
+        const kind = this._normalizeText(asset?.kind);
+        const resourceType = this._normalizeText(asset?.resourceType);
+        const bytes = Number(asset?.bytes) || 0;
+
+        if (!url) {
+          throw ApiError.badRequest('Documentation asset URL is required', 'VALIDATION_ERROR');
+        }
+        if (!MEETING_DOCUMENTATION_ASSET_KINDS.includes(kind)) {
+          throw ApiError.badRequest('Documentation asset type is invalid', 'VALIDATION_ERROR');
+        }
+        if (expectedKind && kind !== expectedKind) {
+          throw ApiError.badRequest(
+            `Documentation field expects ${expectedKind} files only`,
+            'VALIDATION_ERROR'
+          );
+        }
+        if (!['image', 'video', 'raw'].includes(resourceType)) {
+          throw ApiError.badRequest('Documentation asset resource type is invalid', 'VALIDATION_ERROR');
+        }
+
+        const normalizedAsset = {
+          url,
+          publicId: publicId || undefined,
+          originalName: originalName || undefined,
+          mimeType: mimeType || undefined,
+          kind,
+          resourceType,
+          bytes,
+        };
+
+        return [publicId || url, normalizedAsset];
+      })
+    ).values()];
+  }
+
+  _normalizeMeetingDocumentationFieldResponse(response, fieldConfig) {
+    const fieldType = fieldConfig?.type;
+    const fieldLabel = fieldConfig?.label || '';
+    const fieldId = this._toId(fieldConfig?._id);
+    const textValue = this._normalizeText(response?.textValue);
+    const numberInput =
+      response?.numberValue === '' || response?.numberValue == null ? null : Number(response.numberValue);
+    const expectedAssetKindByType = {
+      image: 'image',
+      video: 'video',
+      document: 'document',
+    };
+    const expectedAssetKind = expectedAssetKindByType[fieldType] || null;
+    const assets = expectedAssetKind
+      ? this._normalizeMeetingDocumentationAssets(response?.assets || [], expectedAssetKind)
+      : [];
+
+    if (fieldType === 'text') {
+      if (!textValue) return null;
+      return {
+        fieldId: this._toObjectId(fieldId, 'fieldId'),
+        fieldLabel,
+        fieldType,
+        textValue,
+      };
+    }
+
+    if (fieldType === 'number') {
+      if (numberInput == null) return null;
+      if (!Number.isFinite(numberInput)) {
+        throw ApiError.badRequest(`${fieldLabel} must be a valid number`, 'VALIDATION_ERROR');
+      }
+      return {
+        fieldId: this._toObjectId(fieldId, 'fieldId'),
+        fieldLabel,
+        fieldType,
+        numberValue: numberInput,
+      };
+    }
+
+    if (assets.length === 0) return null;
+    return {
+      fieldId: this._toObjectId(fieldId, 'fieldId'),
+      fieldLabel,
+      fieldType,
+      assets,
+    };
+  }
+
+  async _mapMeetingDocumentationRecord(record) {
+    const updatedById = this._toId(record?.updatedBy || record?.createdBy);
+    const usersMap = updatedById ? await this._buildUserMap([updatedById]) : new Map();
+    const updatedByUser = updatedById ? usersMap.get(updatedById) : null;
+
+    return {
+      documentationDate: record?.documentationDate || null,
+      notes: record?.notes || '',
+      attachments: (record?.attachments || [])
+        .map((asset) => this._mapMeetingDocumentationAsset(asset))
+        .filter(Boolean),
+      fieldResponses: (record?.fieldResponses || [])
+        .map((response) => this._mapMeetingDocumentationFieldResponse(response))
+        .filter(Boolean),
+      updatedAt: record?.updatedAt || null,
+      updatedBy: updatedById
+        ? {
+            id: updatedById,
+            fullName: updatedByUser?.fullName || '',
+          }
+        : null,
+      historyCount: Array.isArray(record?.history) ? record.history.length : 0,
+      canManageDocumentation: true,
+    };
+  }
+
+  async getMeetingDocumentationSettings({ userPermissions = [], includeInactive = true } = {}) {
+    if (!this._canManageMeetingDocumentation(userPermissions) &&
+        !this._canManageMeetingDocumentationSettings(userPermissions)) {
+      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+    }
+
+    const config = await getOrCreateMeetingDocumentationConfig();
+    const updatedById = this._toId(config?.updatedBy);
+    const usersMap = updatedById ? await this._buildUserMap([updatedById]) : new Map();
+    const updatedByUser = updatedById ? usersMap.get(updatedById) : null;
+    const fields = (config.fields || [])
+      .map((field) => this._mapMeetingDocumentationSettingsField(field))
+      .filter((field) => includeInactive || field.isActive)
+      .sort((a, b) => a.sortOrder - b.sortOrder || String(a.label).localeCompare(String(b.label)));
+
+    return {
+      fields,
+      updatedAt: config.updatedAt || null,
+      updatedBy: updatedById
+        ? {
+            id: updatedById,
+            fullName: updatedByUser?.fullName || '',
+          }
+        : null,
+    };
+  }
+
+  async updateMeetingDocumentationSettings(fields = [], { actorUserId, userPermissions = [] } = {}) {
+    if (!this._canManageMeetingDocumentationSettings(userPermissions)) {
+      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+    }
+
+    const config = await getOrCreateMeetingDocumentationConfig();
+    config.fields = this._normalizeMeetingDocumentationSettingsFields(fields);
+    config.updatedBy = this._toObjectId(actorUserId, 'actorUserId');
+    await config.save();
+
+    return this.getMeetingDocumentationSettings({
+      userPermissions,
+      includeInactive: true,
+    });
+  }
+
+  async getMeetingDocumentation(
+    meetingId,
+    documentationDate,
+    { actorUserId, userPermissions = [] } = {}
+  ) {
+    if (!this._canManageMeetingDocumentation(userPermissions)) {
+      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+    }
+
+    const meeting = await this._getMeetingForAttendance(meetingId);
+    const accessContext = this._resolveMeetingAccess({
+      meeting,
+      actorUserId,
+      userPermissions,
+    });
+
+    if (!accessContext.allowed) {
+      throw ApiError.forbidden('You are not allowed to access this meeting', 'PERMISSION_DENIED');
+    }
+    if (accessContext.accessLevel === 'member') {
+      throw ApiError.forbidden(
+        'You are not allowed to document this meeting',
+        'PERMISSION_DENIED'
+      );
+    }
+
+    const normalizedDocumentationDate = this._assertPastMeetingDateAllowed(
+      meeting.day,
+      documentationDate,
+      'Documentation date'
+    );
+    const record = await MeetingDocumentation.findOne({
+      meetingId: this._toObjectId(meetingId, 'meetingId'),
+      documentationDate: normalizedDocumentationDate,
+    }).lean();
+
+    if (!record) {
+      return {
+        documentationDate: normalizedDocumentationDate,
+        notes: '',
+        attachments: [],
+        fieldResponses: [],
+        updatedAt: null,
+        updatedBy: null,
+        historyCount: 0,
+        canManageDocumentation: true,
+      };
+    }
+
+    return this._mapMeetingDocumentationRecord(record);
+  }
+
+  async updateMeetingDocumentation(
+    meetingId,
+    { documentationDate, notes, attachments = [], fieldResponses = [] } = {},
+    { actorUserId, userPermissions = [] } = {}
+  ) {
+    if (!this._canManageMeetingDocumentation(userPermissions)) {
+      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+    }
+
+    const meeting = await this._getMeetingForAttendance(meetingId);
+    const accessContext = this._resolveMeetingAccess({
+      meeting,
+      actorUserId,
+      userPermissions,
+    });
+
+    if (!accessContext.allowed) {
+      throw ApiError.forbidden('You are not allowed to access this meeting', 'PERMISSION_DENIED');
+    }
+    if (accessContext.accessLevel === 'member') {
+      throw ApiError.forbidden(
+        'You are not allowed to document this meeting',
+        'PERMISSION_DENIED'
+      );
+    }
+
+    const normalizedDocumentationDate = this._assertPastMeetingDateAllowed(
+      meeting.day,
+      documentationDate,
+      'Documentation date'
+    );
+    const normalizedNotes = this._normalizeText(notes);
+    const normalizedAttachments = this._normalizeMeetingDocumentationAssets(attachments || []);
+    const documentationConfig = await getOrCreateMeetingDocumentationConfig();
+    const activeFields = (documentationConfig.fields || [])
+      .filter((field) => field?.isActive !== false)
+      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    const activeFieldMap = new Map(activeFields.map((field) => [this._toId(field._id), field]));
+    const normalizedFieldResponseMap = new Map();
+
+    (fieldResponses || []).forEach((response) => {
+      const fieldId = this._toId(response?.fieldId);
+      if (!fieldId || !activeFieldMap.has(fieldId)) {
+        throw ApiError.badRequest('Documentation field is invalid', 'VALIDATION_ERROR');
+      }
+
+      const normalizedResponse = this._normalizeMeetingDocumentationFieldResponse(
+        response,
+        activeFieldMap.get(fieldId)
+      );
+      if (normalizedResponse) {
+        normalizedFieldResponseMap.set(fieldId, normalizedResponse);
+      } else {
+        normalizedFieldResponseMap.delete(fieldId);
+      }
+    });
+
+    activeFields.forEach((field) => {
+      const fieldId = this._toId(field._id);
+      if (field.required && !normalizedFieldResponseMap.has(fieldId)) {
+        throw ApiError.badRequest(
+          `${field.label} is required for daily documentation`,
+          'VALIDATION_ERROR'
+        );
+      }
+    });
+
+    const normalizedFieldResponses = activeFields
+      .map((field) => normalizedFieldResponseMap.get(this._toId(field._id)) || null)
+      .filter(Boolean);
+
+    const actorObjectId = this._toObjectId(actorUserId, 'actorUserId');
+    const meetingObjectId = this._toObjectId(meetingId, 'meetingId');
+    const now = new Date();
+    let record = await MeetingDocumentation.findOne({
+      meetingId: meetingObjectId,
+      documentationDate: normalizedDocumentationDate,
+    });
+
+    if (!record) {
+      record = new MeetingDocumentation({
+        meetingId: meetingObjectId,
+        documentationDate: normalizedDocumentationDate,
+        createdBy: actorObjectId,
+      });
+    }
+
+    record.notes = normalizedNotes || undefined;
+    record.attachments = normalizedAttachments;
+    record.fieldResponses = normalizedFieldResponses;
+    record.updatedBy = actorObjectId;
+    record.history = record.history || [];
+    record.history.push({
+      actorUserId: actorObjectId,
+      accessLevel: accessContext.accessLevel,
+      notes: normalizedNotes || undefined,
+      attachments: normalizedAttachments,
+      fieldResponses: normalizedFieldResponses,
+      action: 'documentation_saved',
+      createdAt: now,
+    });
+    await record.save();
+
+    return this._mapMeetingDocumentationRecord(record.toObject());
+  }
+
   async getMeetingMemberById(meetingId, memberId, { actorUserId, userPermissions = [] } = {}) {
     const meeting = await this._getMeetingForMemberAccess(meetingId);
     const accessContext = this._resolveMeetingAccess({
@@ -1731,7 +2225,11 @@ class MeetingsService {
       );
     }
 
-    const normalizedAttendanceDate = this._assertAttendanceDateAllowed(meeting.day, attendanceDate);
+    const normalizedAttendanceDate = this._assertPastMeetingDateAllowed(
+      meeting.day,
+      attendanceDate,
+      'Attendance date'
+    );
     const scopedMemberIds = this._resolveScopedMemberIds(meeting, accessContext);
     const record = this._extractMeetingAttendanceRecord(meeting, normalizedAttendanceDate);
     const viewerAuditEntry = this._extractViewerAttendanceAuditEntry(
@@ -1775,7 +2273,11 @@ class MeetingsService {
       );
     }
 
-    const normalizedAttendanceDate = this._assertAttendanceDateAllowed(meeting.day, attendanceDate);
+    const normalizedAttendanceDate = this._assertPastMeetingDateAllowed(
+      meeting.day,
+      attendanceDate,
+      'Attendance date'
+    );
     const scopedMemberIds = this._resolveScopedMemberIds(meeting, accessContext);
     const scopedMemberIdsList = [...scopedMemberIds];
     const selectedScopedMemberIds = [...new Set(

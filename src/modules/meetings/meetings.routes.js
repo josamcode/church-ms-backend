@@ -1,5 +1,6 @@
 const express = require('express');
 const multer = require('multer');
+const config = require('../../config/env');
 
 const router = express.Router();
 const meetingsController = require('./meetings.controller');
@@ -13,6 +14,10 @@ const { PERMISSIONS } = require('../../constants/permissions');
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
+});
+const documentationUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: config.upload.maxDocumentationFileSize },
 });
 
 router.post(
@@ -89,6 +94,39 @@ router.post(
   meetingsController.uploadMeetingAvatarImage
 );
 
+router.get(
+  '/documentation-settings',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.MEETINGS_SETTINGS_MANAGE,
+    PERMISSIONS.MEETINGS_DOCUMENTATION_MANAGE,
+    PERMISSIONS.MEETINGS_UPDATE,
+    PERMISSIONS.MEETINGS_SERVANTS_MANAGE
+  ),
+  meetingsController.getMeetingDocumentationSettings
+);
+
+router.put(
+  '/documentation-settings',
+  authenticateJWT,
+  authorizeAnyPermissions(PERMISSIONS.MEETINGS_SETTINGS_MANAGE, PERMISSIONS.MEETINGS_UPDATE),
+  validate(meetingsValidators.updateMeetingDocumentationSettings),
+  meetingsController.updateMeetingDocumentationSettings
+);
+
+router.post(
+  '/documentation/upload-asset',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.MEETINGS_DOCUMENTATION_MANAGE,
+    PERMISSIONS.MEETINGS_UPDATE,
+    PERMISSIONS.MEETINGS_SERVANTS_MANAGE
+  ),
+  uploadLimiter,
+  documentationUpload.single('file'),
+  meetingsController.uploadMeetingDocumentationAsset
+);
+
 router.post(
   '/',
   authenticateJWT,
@@ -162,6 +200,30 @@ router.put(
   ),
   validate(meetingsValidators.updateMeetingAttendance),
   meetingsController.updateMeetingAttendance
+);
+
+router.get(
+  '/:id/documentation',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.MEETINGS_DOCUMENTATION_MANAGE,
+    PERMISSIONS.MEETINGS_UPDATE,
+    PERMISSIONS.MEETINGS_SERVANTS_MANAGE
+  ),
+  validate(meetingsValidators.meetingDocumentationQuery),
+  meetingsController.getMeetingDocumentation
+);
+
+router.put(
+  '/:id/documentation',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.MEETINGS_DOCUMENTATION_MANAGE,
+    PERMISSIONS.MEETINGS_UPDATE,
+    PERMISSIONS.MEETINGS_SERVANTS_MANAGE
+  ),
+  validate(meetingsValidators.updateMeetingDocumentation),
+  meetingsController.updateMeetingDocumentation
 );
 
 router.get(

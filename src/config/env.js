@@ -54,6 +54,15 @@ module.exports = {
   upload: {
     maxFileSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 5 * 1024 * 1024,
     allowedImageTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+    maxDocumentationFileSize:
+      parseInt(process.env.MAX_DOCUMENTATION_FILE_SIZE, 10) || 20 * 1024 * 1024,
+    allowedVideoTypes: ['video/mp4', 'video/quicktime', 'video/webm'],
+    allowedDocumentTypes: [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain',
+    ],
   },
 
   cache: {
