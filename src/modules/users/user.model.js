@@ -139,6 +139,45 @@ const meetingAttendanceEntrySchema = new mongoose.Schema(
   { _id: true, timestamps: false }
 );
 
+const divineLiturgyAttendanceEntrySchema = new mongoose.Schema(
+  {
+    entryType: {
+      type: String,
+      enum: ['recurring', 'exception'],
+      required: true,
+    },
+    serviceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+    },
+    serviceType: {
+      type: String,
+      enum: ['DIVINE_LITURGY', 'VESPERS'],
+      required: true,
+    },
+    attendanceDate: {
+      type: String,
+      required: true,
+      trim: true,
+      match: /^\d{4}-\d{2}-\d{2}$/,
+    },
+    recordedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    updatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: true, timestamps: false }
+);
+
 const userSchema = new mongoose.Schema(
   {
     // ═══════ A) معلومات أساسية ═══════
@@ -163,6 +202,10 @@ const userSchema = new mongoose.Schema(
     avatar: {
       url: { type: String },
       publicId: { type: String },
+    },
+    divineLiturgyAttendance: {
+      type: [divineLiturgyAttendanceEntrySchema],
+      default: [],
     },
     nationalId: {
       type: String,
@@ -330,6 +373,10 @@ userSchema.index({ 'employment.status': 1 });
 userSchema.index({ 'presence.status': 1 });
 userSchema.index({ 'health.conditions.name': 1 });
 userSchema.index({ 'meetingAttendance.meetingId': 1, 'meetingAttendance.attendanceDate': -1 });
+userSchema.index({
+  'divineLiturgyAttendance.serviceId': 1,
+  'divineLiturgyAttendance.attendanceDate': -1,
+});
 userSchema.index({ 'father.userId': 1 }, { sparse: true });
 userSchema.index({ 'mother.userId': 1 }, { sparse: true });
 userSchema.index({ 'spouse.userId': 1 }, { sparse: true });

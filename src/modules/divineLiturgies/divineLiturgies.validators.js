@@ -1,5 +1,8 @@
 const Joi = require('joi');
 const { SERVICE_TYPES, DAYS_OF_WEEK } = require('./divineLiturgyRecurring.model');
+const {
+  DIVINE_LITURGY_ATTENDANCE_ENTRY_TYPES,
+} = require('./divineLiturgyAttendance.model');
 
 const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -8,6 +11,18 @@ const objectIdField = Joi.string().pattern(OBJECT_ID_PATTERN);
 
 const idParam = {
   params: Joi.object({
+    id: objectIdField.required().messages({
+      'string.pattern.base': 'Invalid id',
+      'any.required': 'Id is required',
+    }),
+  }),
+};
+
+const attendanceParams = {
+  params: Joi.object({
+    entryType: Joi.string()
+      .valid(...DIVINE_LITURGY_ATTENDANCE_ENTRY_TYPES)
+      .required(),
     id: objectIdField.required().messages({
       'string.pattern.base': 'Invalid id',
       'any.required': 'Id is required',
@@ -93,8 +108,38 @@ const setChurchPriests = {
   }),
 };
 
+const attendanceQuery = {
+  params: attendanceParams.params,
+  query: Joi.object({
+    attendanceDate: Joi.string()
+      .trim()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .required()
+      .messages({
+        'string.pattern.base': 'Attendance date must be YYYY-MM-DD',
+      }),
+  }),
+};
+
+const updateAttendance = {
+  params: attendanceParams.params,
+  body: Joi.object({
+    attendanceDate: Joi.string()
+      .trim()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .required()
+      .messages({
+        'string.pattern.base': 'Attendance date must be YYYY-MM-DD',
+      }),
+    attendedUserIds: Joi.array().items(objectIdField).required(),
+  }),
+};
+
 module.exports = {
   idParam,
+  attendanceParams,
+  attendanceQuery,
+  updateAttendance,
   createRecurring,
   updateRecurring,
   createException,

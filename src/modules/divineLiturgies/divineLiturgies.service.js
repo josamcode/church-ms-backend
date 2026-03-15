@@ -1,9 +1,16 @@
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
+const redisClient = require('../../config/redis');
+const { CACHE_KEYS } = require('../../constants/cacheKeys');
+const { PERMISSIONS } = require('../../constants/permissions');
 const User = require('../users/user.model');
 const ChurchPriest = require('./churchPriest.model');
+const DivineLiturgyAttendance = require('./divineLiturgyAttendance.model');
 const DivineLiturgyRecurring = require('./divineLiturgyRecurring.model');
 const DivineLiturgyException = require('./divineLiturgyException.model');
+const {
+  DIVINE_LITURGY_ATTENDANCE_ENTRY_TYPES,
+} = require('./divineLiturgyAttendance.model');
 const { SERVICE_TYPES, DAYS_OF_WEEK } = require('./divineLiturgyRecurring.model');
 
 const DAY_ORDER = DAYS_OF_WEEK.reduce((acc, day, index) => {
@@ -28,6 +35,105 @@ class DivineLiturgiesService {
 
   _normalizeText(value) {
     return String(value || '').trim();
+  }
+
+  _buildLocalDateKey(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  _normalizeAttendanceDate(rawDate) {
+    const normalized = this._normalizeText(rawDate);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      throw ApiError.badRequest('Attendance date is invalid', 'VALIDATION_ERROR');
+    }
+
+    const [year, month, day] = normalized.split('-').map((value) => parseInt(value, 10));
+    const date = new Date(year, month - 1, day);
+    if (
+      Number.isNaN(date.getTime()) ||
+      date.getFullYear() !== year ||
+      date.getMonth() !== month - 1 ||
+      date.getDate() !== day
+    ) {
+      throw ApiError.badRequest('Attendance date is invalid', 'VALIDATION_ERROR');
+    }
+
+    return {
+      dateKey: normalized,
+      dayOfWeek: date.getDay(),
+    };
+  }
+
+  _getWeekdayIndex(day) {
+    return DAY_ORDER[this._normalizeText(day)] ?? null;
+  }
+
+  _assertPastRecurringAttendanceDateAllowed(dayOfWeek, rawDate, label = 'Attendance date') {
+    const { dateKey, dayOfWeek: selectedDayOfWeek } = this._normalizeAttendanceDate(rawDate);
+    const expectedDayOfWeek = this._getWeekdayIndex(dayOfWeek);
+
+    if (expectedDayOfWeek == null || expectedDayOfWeek !== selectedDayOfWeek) {
+      throw ApiError.badRequest(`${label} must match the service day`, 'VALIDATION_ERROR');
+    }
+
+    if (dateKey >= this._buildLocalDateKey()) {
+      throw ApiError.badRequest(`${label} must be a past service date`, 'VALIDATION_ERROR');
+    }
+
+    return dateKey;
+  }
+
+  _assertPastExceptionAttendanceDateAllowed(exceptionDate, rawDate, label = 'Attendance date') {
+    const { dateKey } = this._normalizeAttendanceDate(rawDate);
+    const expectedDate = this._normalizeText(exceptionDate);
+
+    if (!expectedDate || dateKey !== expectedDate) {
+      throw ApiError.badRequest(`${label} must match the exceptional service date`, 'VALIDATION_ERROR');
+    }
+
+    if (dateKey >= this._buildLocalDateKey()) {
+      throw ApiError.badRequest(`${label} must be a past service date`, 'VALIDATION_ERROR');
+    }
+
+    return dateKey;
+  }
+
+  _normalizeAttendanceEntryType(entryType) {
+    const normalizedEntryType = this._normalizeText(entryType).toLowerCase();
+    if (!DIVINE_LITURGY_ATTENDANCE_ENTRY_TYPES.includes(normalizedEntryType)) {
+      throw ApiError.badRequest('Attendance entry type is invalid', 'VALIDATION_ERROR');
+    }
+    return normalizedEntryType;
+  }
+
+  _hasPermission(permissions = [], permission) {
+    return Array.isArray(permissions) && permissions.includes(permission);
+  }
+
+  _canManageAttendance(userPermissions = []) {
+    return (
+      this._hasPermission(userPermissions, PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE) ||
+      this._hasPermission(userPermissions, PERMISSIONS.DIVINE_LITURGIES_MANAGE)
+    );
+  }
+
+  async _clearUserCaches(userIds = []) {
+    const uniqueUserIds = [...new Set((userIds || []).map((value) => this._toId(value)).filter(Boolean))];
+    if (uniqueUserIds.length === 0) return;
+
+    await Promise.all(
+      uniqueUserIds.map(async (userId) => {
+        try {
+          await redisClient.del(CACHE_KEYS.USER_PROFILE(userId));
+          await redisClient.del(CACHE_KEYS.USER_PERMISSIONS(userId));
+        } catch (_error) {
+          // Cache misses should not block attendance updates.
+        }
+      })
+    );
   }
 
   _normalizeObjectIdStrings(values = [], fieldName = 'id') {
@@ -149,6 +255,133 @@ class DivineLiturgiesService {
     };
   }
 
+  _mapAttendanceService(entryType, entry) {
+    if (entryType === 'recurring') {
+      const mapped = this._mapRecurring(entry);
+      return {
+        id: mapped.id,
+        entryType,
+        serviceType: mapped.serviceType,
+        dayOfWeek: mapped.dayOfWeek,
+        date: null,
+        startTime: mapped.startTime,
+        endTime: mapped.endTime,
+        name: mapped.name,
+        displayName: mapped.displayName,
+        createdAt: mapped.createdAt || null,
+        updatedAt: mapped.updatedAt || null,
+      };
+    }
+
+    const mapped = this._mapException(entry);
+    return {
+      id: mapped.id,
+      entryType,
+      serviceType: SERVICE_TYPES.DIVINE_LITURGY,
+      dayOfWeek: DAYS_OF_WEEK[new Date(`${mapped.date}T00:00:00`).getDay()] || null,
+      date: mapped.date,
+      startTime: mapped.startTime,
+      endTime: mapped.endTime,
+      name: mapped.name,
+      displayName: mapped.displayName,
+      createdAt: mapped.createdAt || null,
+      updatedAt: mapped.updatedAt || null,
+    };
+  }
+
+  async _loadAttendanceService(entryType, id) {
+    const normalizedEntryType = this._normalizeAttendanceEntryType(entryType);
+    const serviceId = this._toObjectId(id, 'id');
+
+    if (normalizedEntryType === 'recurring') {
+      const recurring = await this._loadRecurringById(serviceId);
+      if (!recurring) {
+        throw ApiError.notFound('Recurring service was not found', 'RESOURCE_NOT_FOUND');
+      }
+
+      return {
+        entryType: normalizedEntryType,
+        serviceId,
+        service: this._mapAttendanceService(normalizedEntryType, recurring),
+      };
+    }
+
+    const exception = await this._loadExceptionById(serviceId);
+    if (!exception) {
+      throw ApiError.notFound('Exceptional service was not found', 'RESOURCE_NOT_FOUND');
+    }
+
+    return {
+      entryType: normalizedEntryType,
+      serviceId,
+      service: this._mapAttendanceService(normalizedEntryType, exception),
+    };
+  }
+
+  _extractAttendanceViewerAuditEntry(record, actorUserId) {
+    const normalizedActorId = this._toId(actorUserId);
+    if (!normalizedActorId) return null;
+
+    return (
+      [...(record?.auditLog || [])]
+        .sort((a, b) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime())
+        .find((entry) => this._toId(entry?.actorUserId) === normalizedActorId) || null
+    );
+  }
+
+  async _mapAttendanceRecord(record, attendanceDate, actorUserId) {
+    const viewerAuditEntry = this._extractAttendanceViewerAuditEntry(record, actorUserId);
+    const updatedById = this._toId(record?.updatedBy || record?.recordedBy);
+    const viewerUpdatedById = this._toId(viewerAuditEntry?.actorUserId);
+    const userIdsToLoad = [...new Set([updatedById, viewerUpdatedById].filter(Boolean))];
+    const usersMap = userIdsToLoad.length > 0
+      ? new Map(
+        (await User.find({ _id: { $in: userIdsToLoad.map((id) => this._toObjectId(id)) } })
+          .select('fullName')
+          .lean())
+          .map((user) => [this._toId(user._id), user])
+      )
+      : new Map();
+
+    const updatedByUser = updatedById ? usersMap.get(updatedById) : null;
+    const viewerUpdatedByUser = viewerUpdatedById ? usersMap.get(viewerUpdatedById) : null;
+
+    return {
+      attendanceDate,
+      attendedUserIds: [...new Set((record?.attendedUserIds || []).map((value) => this._toId(value)).filter(Boolean))],
+      updatedAt: record?.updatedAt || null,
+      updatedBy: updatedById
+        ? {
+            id: updatedById,
+            fullName: updatedByUser?.fullName || '',
+          }
+        : null,
+      viewerUpdatedAt: viewerAuditEntry?.createdAt || null,
+      viewerUpdatedBy: viewerUpdatedById
+        ? {
+            id: viewerUpdatedById,
+            fullName: viewerUpdatedByUser?.fullName || '',
+          }
+        : null,
+      canManageAttendance: true,
+    };
+  }
+
+  async _assertAttendanceUsersExist(userIds = []) {
+    if (!userIds.length) return;
+
+    const users = await User.find({
+      _id: { $in: userIds.map((id) => this._toObjectId(id, 'attendedUserIds')) },
+      isDeleted: { $ne: true },
+    })
+      .select('_id')
+      .lean();
+
+    if (users.length !== userIds.length) {
+      throw ApiError.badRequest('Some selected users were not found', 'VALIDATION_ERROR');
+    }
+  }
+
   _sortRecurring(entries = []) {
     return [...entries].sort((a, b) => {
       const dayDiff = (DAY_ORDER[a.dayOfWeek] ?? 99) - (DAY_ORDER[b.dayOfWeek] ?? 99);
@@ -252,6 +485,195 @@ class DivineLiturgiesService {
       recurringVespers,
       exceptionalDivineLiturgies,
     };
+  }
+
+  async getAttendanceContext(entryType, id, { userPermissions = [] } = {}) {
+    if (!this._canManageAttendance(userPermissions)) {
+      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+    }
+
+    const attendanceService = await this._loadAttendanceService(entryType, id);
+    const users = await User.find({ isDeleted: { $ne: true } })
+      .select('fullName')
+      .sort({ fullName: 1, _id: 1 })
+      .lean();
+
+    return {
+      service: attendanceService.service,
+      users: users.map((user) => ({
+        id: this._toId(user._id),
+        fullName: user.fullName || '',
+      })),
+      canManageAttendance: true,
+    };
+  }
+
+  async getAttendance(
+    entryType,
+    id,
+    attendanceDate,
+    { actorUserId, userPermissions = [] } = {}
+  ) {
+    if (!this._canManageAttendance(userPermissions)) {
+      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+    }
+
+    const attendanceService = await this._loadAttendanceService(entryType, id);
+    const normalizedAttendanceDate =
+      attendanceService.entryType === 'recurring'
+        ? this._assertPastRecurringAttendanceDateAllowed(
+          attendanceService.service.dayOfWeek,
+          attendanceDate
+        )
+        : this._assertPastExceptionAttendanceDateAllowed(
+          attendanceService.service.date,
+          attendanceDate
+        );
+
+    const record = await DivineLiturgyAttendance.findOne({
+      entryType: attendanceService.entryType,
+      serviceId: attendanceService.serviceId,
+      attendanceDate: normalizedAttendanceDate,
+    }).lean();
+
+    if (!record) {
+      return {
+        attendanceDate: normalizedAttendanceDate,
+        attendedUserIds: [],
+        updatedAt: null,
+        updatedBy: null,
+        viewerUpdatedAt: null,
+        viewerUpdatedBy: null,
+        canManageAttendance: true,
+      };
+    }
+
+    return this._mapAttendanceRecord(record, normalizedAttendanceDate, actorUserId);
+  }
+
+  async updateAttendance(
+    entryType,
+    id,
+    attendanceDate,
+    attendedUserIds = [],
+    { actorUserId, userPermissions = [] } = {}
+  ) {
+    if (!this._canManageAttendance(userPermissions)) {
+      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+    }
+
+    const attendanceService = await this._loadAttendanceService(entryType, id);
+    const normalizedAttendanceDate =
+      attendanceService.entryType === 'recurring'
+        ? this._assertPastRecurringAttendanceDateAllowed(
+          attendanceService.service.dayOfWeek,
+          attendanceDate
+        )
+        : this._assertPastExceptionAttendanceDateAllowed(
+          attendanceService.service.date,
+          attendanceDate
+        );
+
+    const normalizedAttendedUserIds = [...new Set(
+      (attendedUserIds || [])
+        .map((value) => this._toId(value))
+        .filter(Boolean)
+    )];
+
+    await this._assertAttendanceUsersExist(normalizedAttendedUserIds);
+
+    const actorObjectId = this._toObjectId(actorUserId, 'actorUserId');
+    const now = new Date();
+    let record = await DivineLiturgyAttendance.findOne({
+      entryType: attendanceService.entryType,
+      serviceId: attendanceService.serviceId,
+      attendanceDate: normalizedAttendanceDate,
+    });
+
+    const previousAttendedUserIds = [...new Set(
+      (record?.attendedUserIds || []).map((value) => this._toId(value)).filter(Boolean)
+    )];
+
+    if (!record) {
+      record = new DivineLiturgyAttendance({
+        entryType: attendanceService.entryType,
+        serviceId: attendanceService.serviceId,
+        serviceType: attendanceService.service.serviceType,
+        attendanceDate: normalizedAttendanceDate,
+        recordedBy: actorObjectId,
+      });
+    }
+
+    record.serviceType = attendanceService.service.serviceType;
+    record.attendedUserIds = normalizedAttendedUserIds.map((userId) =>
+      this._toObjectId(userId, 'attendedUserIds')
+    );
+    record.updatedBy = actorObjectId;
+    record.updatedAt = now;
+    record.auditLog = record.auditLog || [];
+    record.auditLog.push({
+      actorUserId: actorObjectId,
+      previousAttendedUserIds: previousAttendedUserIds.map((userId) =>
+        this._toObjectId(userId, 'userId')
+      ),
+      attendedUserIds: normalizedAttendedUserIds.map((userId) =>
+        this._toObjectId(userId, 'userId')
+      ),
+      action: 'attendance_check_in_saved',
+      createdAt: now,
+    });
+    await record.save();
+
+    const affectedUserIds = [...new Set([...previousAttendedUserIds, ...normalizedAttendedUserIds])];
+    if (affectedUserIds.length > 0) {
+      await User.updateMany(
+        {
+          _id: { $in: affectedUserIds.map((userId) => this._toObjectId(userId, 'userId')) },
+          isDeleted: { $ne: true },
+        },
+        {
+          $pull: {
+            divineLiturgyAttendance: {
+              entryType: attendanceService.entryType,
+              serviceId: attendanceService.serviceId,
+              attendanceDate: normalizedAttendanceDate,
+            },
+          },
+          $set: {
+            updatedBy: actorObjectId,
+          },
+        }
+      );
+
+      if (normalizedAttendedUserIds.length > 0) {
+        await User.updateMany(
+          {
+            _id: { $in: normalizedAttendedUserIds.map((userId) => this._toObjectId(userId, 'userId')) },
+            isDeleted: { $ne: true },
+          },
+          {
+            $push: {
+              divineLiturgyAttendance: {
+                entryType: attendanceService.entryType,
+                serviceId: attendanceService.serviceId,
+                serviceType: attendanceService.service.serviceType,
+                attendanceDate: normalizedAttendanceDate,
+                recordedBy: actorObjectId,
+                updatedBy: actorObjectId,
+                updatedAt: now,
+              },
+            },
+            $set: {
+              updatedBy: actorObjectId,
+            },
+          }
+        );
+      }
+
+      await this._clearUserCaches(affectedUserIds);
+    }
+
+    return this._mapAttendanceRecord(record.toObject(), normalizedAttendanceDate, actorUserId);
   }
 
   async createRecurring(payload, actorUserId) {

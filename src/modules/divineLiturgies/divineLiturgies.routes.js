@@ -5,14 +5,51 @@ const divineLiturgiesController = require('./divineLiturgies.controller');
 const divineLiturgiesValidators = require('./divineLiturgies.validators');
 const validate = require('../../middlewares/validate');
 const { authenticateJWT } = require('../../middlewares/auth');
-const { authorizePermissions } = require('../../middlewares/permissions');
+const { authorizeAnyPermissions, authorizePermissions } = require('../../middlewares/permissions');
 const { PERMISSIONS } = require('../../constants/permissions');
 
 router.get(
   '/',
   authenticateJWT,
-  authorizePermissions(PERMISSIONS.DIVINE_LITURGIES_VIEW),
+  authorizeAnyPermissions(
+    PERMISSIONS.DIVINE_LITURGIES_VIEW,
+    PERMISSIONS.DIVINE_LITURGIES_MANAGE,
+    PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE
+  ),
   divineLiturgiesController.getOverview
+);
+
+router.get(
+  '/attendance/:entryType/:id/context',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE,
+    PERMISSIONS.DIVINE_LITURGIES_MANAGE
+  ),
+  validate(divineLiturgiesValidators.attendanceParams),
+  divineLiturgiesController.getAttendanceContext
+);
+
+router.get(
+  '/attendance/:entryType/:id',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE,
+    PERMISSIONS.DIVINE_LITURGIES_MANAGE
+  ),
+  validate(divineLiturgiesValidators.attendanceQuery),
+  divineLiturgiesController.getAttendance
+);
+
+router.put(
+  '/attendance/:entryType/:id',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE,
+    PERMISSIONS.DIVINE_LITURGIES_MANAGE
+  ),
+  validate(divineLiturgiesValidators.updateAttendance),
+  divineLiturgiesController.updateAttendance
 );
 
 router.post(

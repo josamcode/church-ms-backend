@@ -10,6 +10,49 @@ const getOverview = asyncHandler(async (_req, res) => {
   });
 });
 
+const getAttendanceContext = asyncHandler(async (req, res) => {
+  const data = await divineLiturgiesService.getAttendanceContext(req.params.entryType, req.params.id, {
+    userPermissions: req.userPermissions,
+  });
+  return ApiResponse.success(res, {
+    message: 'Divine liturgy attendance context loaded successfully',
+    data,
+  });
+});
+
+const getAttendance = asyncHandler(async (req, res) => {
+  const data = await divineLiturgiesService.getAttendance(
+    req.params.entryType,
+    req.params.id,
+    req.query.attendanceDate,
+    {
+      actorUserId: req.user.id,
+      userPermissions: req.userPermissions,
+    }
+  );
+  return ApiResponse.success(res, {
+    message: 'Divine liturgy attendance loaded successfully',
+    data,
+  });
+});
+
+const updateAttendance = asyncHandler(async (req, res) => {
+  const data = await divineLiturgiesService.updateAttendance(
+    req.params.entryType,
+    req.params.id,
+    req.body.attendanceDate,
+    req.body.attendedUserIds,
+    {
+      actorUserId: req.user.id,
+      userPermissions: req.userPermissions,
+    }
+  );
+  return ApiResponse.success(res, {
+    message: 'Divine liturgy attendance saved successfully',
+    data,
+  });
+});
+
 const createRecurring = asyncHandler(async (req, res) => {
   const record = await divineLiturgiesService.createRecurring(req.body, req.user.id);
   return ApiResponse.created(res, {
@@ -68,6 +111,9 @@ const setChurchPriests = asyncHandler(async (req, res) => {
 
 module.exports = {
   getOverview,
+  getAttendanceContext,
+  getAttendance,
+  updateAttendance,
   createRecurring,
   updateRecurring,
   deleteRecurring,
