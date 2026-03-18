@@ -3,6 +3,7 @@ const config = require('../config/env');
 const ApiError = require('../utils/ApiError');
 const redisClient = require('../config/redis');
 const { CACHE_KEYS } = require('../constants/cacheKeys');
+const User = require('../modules/users/user.model');
 
 const authenticateJWT = async (req, res, next) => {
   try {
@@ -38,9 +39,25 @@ const authenticateJWT = async (req, res, next) => {
       }
     }
 
+    const user = await User.findById(decoded.sub)
+      .select('authVersion isDeleted')
+      .lean();
+
+    if (!user || user.isDeleted) {
+      throw ApiError.unauthorized('المستخدم غير موجود', 'AUTH_TOKEN_INVALID');
+    }
+
+    if (Number(decoded.authVersion || 0) !== Number(user.authVersion || 0)) {
+      throw ApiError.unauthorized(
+        'تم تحديث صلاحيات هذا الحساب. يرجى تسجيل الدخول مرة أخرى',
+        'AUTH_SESSION_INVALIDATED'
+      );
+    }
+
     req.user = {
       id: decoded.sub,
       role: decoded.role,
+      authVersion: Number(decoded.authVersion || 0),
       jti: decoded.jti,
     };
 

@@ -304,6 +304,11 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
     lastLoginAt: { type: Date },
+    authVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     isLocked: {
       type: Boolean,
       default: false,
@@ -366,6 +371,7 @@ const userSchema = new mongoose.Schema(
       virtuals: true,
       transform: (_doc, ret) => {
         delete ret.passwordHash;
+        delete ret.authVersion;
         delete ret.__v;
         return ret;
       },
@@ -496,6 +502,7 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
 userSchema.methods.toSafeObject = function () {
   const obj = this.toObject();
   delete obj.passwordHash;
+  delete obj.authVersion;
   delete obj.changeLog;
   delete obj.__v;
   return obj;

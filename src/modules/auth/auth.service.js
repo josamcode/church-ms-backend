@@ -19,6 +19,7 @@ class AuthService {
       {
         sub: String(user._id),
         role: user.role,
+        authVersion: Number(user.authVersion || 0),
         jti,
       },
       config.jwt.accessSecret,
@@ -44,7 +45,7 @@ class AuthService {
   /**
    * تخزين رمز التحديث في Redis
    */
-  async storeRefreshToken(userId, refreshToken) {
+  async storeRefreshToken(userId, refreshToken, authVersion = 0) {
     const hash = this.hashToken(refreshToken);
     try {
       await redisClient.setex(
@@ -52,6 +53,7 @@ class AuthService {
         CACHE_TTL.REFRESH_TOKEN,
         JSON.stringify({
           userId: String(userId),
+          authVersion: Number(authVersion || 0),
           createdAt: new Date().toISOString(),
         })
       );
@@ -94,7 +96,7 @@ class AuthService {
 
     const { token: accessToken } = this.generateAccessToken(user);
     const refreshToken = this.generateRefreshToken();
-    await this.storeRefreshToken(user._id, refreshToken);
+    await this.storeRefreshToken(user._id, refreshToken, user.authVersion);
 
     return {
       user: user.toSafeObject(),
@@ -139,7 +141,7 @@ class AuthService {
 
     const { token: accessToken } = this.generateAccessToken(user);
     const refreshToken = this.generateRefreshToken();
-    await this.storeRefreshToken(user._id, refreshToken);
+    await this.storeRefreshToken(user._id, refreshToken, user.authVersion);
 
     return {
       user: user.toSafeObject(),
@@ -172,7 +174,7 @@ class AuthService {
       );
     }
 
-    const { userId } = JSON.parse(stored);
+    const { userId, authVersion: storedAuthVersion = 0 } = JSON.parse(stored);
 
     const user = await User.findById(userId);
     if (!user || user.isDeleted) {
@@ -185,12 +187,20 @@ class AuthService {
       throw ApiError.forbidden('الحساب مغلق', 'AUTH_ACCOUNT_LOCKED');
     }
 
+    if (Number(user.authVersion || 0) !== Number(storedAuthVersion || 0)) {
+      await redisClient.del(CACHE_KEYS.REFRESH_TOKEN(hash));
+      throw ApiError.unauthorized(
+        'تم تحديث صلاحيات هذا الحساب. يرجى تسجيل الدخول مرة أخرى',
+        'AUTH_SESSION_INVALIDATED'
+      );
+    }
+
     // Rotate: delete old, create new
     await redisClient.del(CACHE_KEYS.REFRESH_TOKEN(hash));
 
     const { token: accessToken } = this.generateAccessToken(user);
     const newRefreshToken = this.generateRefreshToken();
-    await this.storeRefreshToken(user._id, newRefreshToken);
+    await this.storeRefreshToken(user._id, newRefreshToken, user.authVersion);
 
     return {
       accessToken,
@@ -284,6 +294,7 @@ class AuthService {
     }
 
     user.passwordHash = newPassword;
+    user.authVersion = Number(user.authVersion || 0) + 1;
 
     user.changeLog.push({
       by: userId,

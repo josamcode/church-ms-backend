@@ -670,6 +670,8 @@ class UserService {
     ];
 
     const changes = [];
+    let shouldInvalidateSessions = false;
+    const authSensitiveFields = new Set(['role', 'hasLogin', 'extraPermissions', 'deniedPermissions']);
 
     for (const field of allowedFields) {
       if (data[field] !== undefined) {
@@ -683,6 +685,9 @@ class UserService {
             to: newVal,
           });
           user[field] = newVal;
+          if (authSensitiveFields.has(field)) {
+            shouldInvalidateSessions = true;
+          }
         }
       }
     }
@@ -719,6 +724,7 @@ class UserService {
           to: '[SECURED]',
         });
         user.passwordHash = nextPassword;
+        shouldInvalidateSessions = true;
       }
     }
 
@@ -727,6 +733,9 @@ class UserService {
     }
 
     user.updatedBy = updatedByUserId;
+    if (shouldInvalidateSessions) {
+      user.authVersion = Number(user.authVersion || 0) + 1;
+    }
     user.changeLog.push({
       by: updatedByUserId,
       action: 'تحديث بيانات المستخدم',
@@ -754,6 +763,7 @@ class UserService {
     user.deletedAt = new Date();
     user.deletedBy = deletedByUserId;
     user.updatedBy = deletedByUserId;
+    user.authVersion = Number(user.authVersion || 0) + 1;
     user.changeLog.push({
       by: deletedByUserId,
       action: 'حذف المستخدم',
@@ -864,6 +874,7 @@ class UserService {
     user.lockReason = lockReason;
     user.lockedAt = new Date();
     user.updatedBy = lockedByUserId;
+    user.authVersion = Number(user.authVersion || 0) + 1;
     user.changeLog.push({
       by: lockedByUserId,
       action: 'قفل الحساب',
@@ -897,6 +908,7 @@ class UserService {
     user.lockReason = undefined;
     user.lockedAt = undefined;
     user.updatedBy = unlockedByUserId;
+    user.authVersion = Number(user.authVersion || 0) + 1;
     user.changeLog.push({
       by: unlockedByUserId,
       action: 'فتح الحساب',

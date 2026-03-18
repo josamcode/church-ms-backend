@@ -30,6 +30,11 @@ const ERROR_CODES = Object.freeze({
     message: 'تم إبطال رمز المصادقة',
     statusCode: 401,
   },
+  AUTH_SESSION_INVALIDATED: {
+    code: 'AUTH_SESSION_INVALIDATED',
+    message: 'تم تحديث صلاحيات هذا الحساب. يرجى تسجيل الدخول مرة أخرى',
+    statusCode: 401,
+  },
   AUTH_REFRESH_TOKEN_INVALID: {
     code: 'AUTH_REFRESH_TOKEN_INVALID',
     message: 'رمز التحديث غير صالح أو منتهي الصلاحية',
