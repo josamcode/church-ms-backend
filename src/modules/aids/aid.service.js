@@ -154,6 +154,52 @@ class AidService {
     return aids;
   }
 
+  async searchAidHistory(houseNames = []) {
+    const normalizedHouseNames = [...new Set(
+      (Array.isArray(houseNames) ? houseNames : [])
+        .map((houseName) => String(houseName || '').trim())
+        .filter(Boolean)
+    )];
+
+    if (normalizedHouseNames.length === 0) return [];
+
+    return Aid.aggregate([
+      {
+        $match: {
+          houseName: { $in: normalizedHouseNames },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            date: '$date',
+            category: '$category',
+            occurrence: '$occurrence',
+            description: '$description',
+          },
+          notes: { $first: '$notes' },
+          beneficiaryHouses: { $addToSet: '$houseName' },
+          beneficiariesCount: { $sum: 1 },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          date: '$_id.date',
+          category: '$_id.category',
+          occurrence: '$_id.occurrence',
+          description: '$_id.description',
+          notes: 1,
+          beneficiaryHouses: 1,
+          beneficiariesCount: 1,
+        },
+      },
+      {
+        $sort: { date: -1, category: 1, description: 1 },
+      },
+    ]).exec();
+  }
+
   async updateFullAidGroup(originalGroup, updatedData, houseNames, recordedBy) {
     const { date, category, occurrence, description } = originalGroup;
     const normalizedOccurrence = normalizeAidOccurrence(updatedData.occurrence);

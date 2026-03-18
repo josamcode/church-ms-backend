@@ -31,6 +31,12 @@ const getAidDetailsQuery = {
   }),
 };
 
+const searchAidHistoryBody = {
+  body: Joi.object({
+    houseNames: Joi.array().items(Joi.string().trim().max(160)).min(1).required(),
+  }),
+};
+
 const approveAidReminderParams = {
   params: Joi.object({
     id: Joi.string().trim().hex().length(24).required(),
@@ -61,5 +67,6 @@ module.exports = {
   createBulkAidsBody,
   getDisbursedAidsQuery,
   getAidDetailsQuery,
+  searchAidHistoryBody,
   updateFullAidGroupBody,
 };

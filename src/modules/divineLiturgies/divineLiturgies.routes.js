@@ -14,7 +14,8 @@ router.get(
   authorizeAnyPermissions(
     PERMISSIONS.DIVINE_LITURGIES_VIEW,
     PERMISSIONS.DIVINE_LITURGIES_MANAGE,
-    PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE
+    PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE,
+    PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE_ASSIGNED_USERS
   ),
   divineLiturgiesController.getOverview
 );
@@ -24,7 +25,8 @@ router.get(
   authenticateJWT,
   authorizeAnyPermissions(
     PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE,
-    PERMISSIONS.DIVINE_LITURGIES_MANAGE
+    PERMISSIONS.DIVINE_LITURGIES_MANAGE,
+    PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE_ASSIGNED_USERS
   ),
   validate(divineLiturgiesValidators.attendanceParams),
   divineLiturgiesController.getAttendanceContext
@@ -35,7 +37,8 @@ router.get(
   authenticateJWT,
   authorizeAnyPermissions(
     PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE,
-    PERMISSIONS.DIVINE_LITURGIES_MANAGE
+    PERMISSIONS.DIVINE_LITURGIES_MANAGE,
+    PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE_ASSIGNED_USERS
   ),
   validate(divineLiturgiesValidators.attendanceQuery),
   divineLiturgiesController.getAttendance
@@ -46,7 +49,8 @@ router.put(
   authenticateJWT,
   authorizeAnyPermissions(
     PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE,
-    PERMISSIONS.DIVINE_LITURGIES_MANAGE
+    PERMISSIONS.DIVINE_LITURGIES_MANAGE,
+    PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE_ASSIGNED_USERS
   ),
   validate(divineLiturgiesValidators.updateAttendance),
   divineLiturgiesController.updateAttendance

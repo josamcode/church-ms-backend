@@ -4,6 +4,7 @@ const redisClient = require('../../config/redis');
 const { CACHE_KEYS } = require('../../constants/cacheKeys');
 const { PERMISSIONS } = require('../../constants/permissions');
 const User = require('../users/user.model');
+const Meeting = require('../meetings/meeting.model');
 const ChurchPriest = require('./churchPriest.model');
 const DivineLiturgyAttendance = require('./divineLiturgyAttendance.model');
 const DivineLiturgyRecurring = require('./divineLiturgyRecurring.model');
@@ -113,11 +114,153 @@ class DivineLiturgiesService {
     return Array.isArray(permissions) && permissions.includes(permission);
   }
 
-  _canManageAttendance(userPermissions = []) {
+  _hasAnyPermission(permissions = [], requiredPermissions = []) {
+    return (requiredPermissions || []).some((permission) => this._hasPermission(permissions, permission));
+  }
+
+  _canManageAttendanceFully(userPermissions = []) {
     return (
       this._hasPermission(userPermissions, PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE) ||
       this._hasPermission(userPermissions, PERMISSIONS.DIVINE_LITURGIES_MANAGE)
     );
+  }
+
+  _canManageAttendance(userPermissions = []) {
+    return (
+      this._canManageAttendanceFully(userPermissions) ||
+      this._hasPermission(
+        userPermissions,
+        PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE_ASSIGNED_USERS
+      )
+    );
+  }
+
+  _normalizeUniqueStrings(values = []) {
+    return [...new Set((values || []).map((value) => this._normalizeText(value)).filter(Boolean))];
+  }
+
+  _isMeetingLeadershipUser(meeting, actorUserId) {
+    const actorId = this._toId(actorUserId);
+    if (!actorId || !meeting) return false;
+
+    if (this._toId(meeting?.serviceSecretary?.userId) === actorId) {
+      return true;
+    }
+
+    return (meeting?.assistantSecretaries || []).some(
+      (assistant) => this._toId(assistant?.userId) === actorId
+    );
+  }
+
+  _findMeetingServantEntry(meeting, actorUserId) {
+    const actorId = this._toId(actorUserId);
+    if (!actorId || !meeting) return null;
+
+    return (
+      (meeting?.servants || []).find((servant) => this._toId(servant?.userId) === actorId) || null
+    );
+  }
+
+  _collectAllMeetingMemberIds(meeting) {
+    const ids = new Set();
+    const push = (value) => {
+      const id = this._toId(value);
+      if (id && mongoose.Types.ObjectId.isValid(id)) {
+        ids.add(id);
+      }
+    };
+
+    (meeting?.servedUserIds || []).forEach((servedId) => push(servedId));
+    (meeting?.groupAssignments || []).forEach((assignment) => {
+      (assignment?.servedUserIds || []).forEach((servedId) => push(servedId));
+    });
+    (meeting?.servants || []).forEach((servant) => {
+      (servant?.servedUserIds || []).forEach((servedId) => push(servedId));
+      (servant?.groupAssignments || []).forEach((assignment) => {
+        (assignment?.servedUserIds || []).forEach((servedId) => push(servedId));
+      });
+    });
+
+    return ids;
+  }
+
+  _getServantScope(meeting, servantEntry) {
+    const groupNames = new Set(
+      this._normalizeUniqueStrings([
+        ...(servantEntry?.groupsManaged || []),
+        ...((servantEntry?.groupAssignments || []).map((entry) => entry?.group)),
+      ])
+    );
+    const scopedUserIds = new Set();
+    const push = (value) => {
+      const id = this._toId(value);
+      if (id && mongoose.Types.ObjectId.isValid(id)) {
+        scopedUserIds.add(id);
+      }
+    };
+
+    (servantEntry?.servedUserIds || []).forEach((servedId) => push(servedId));
+    (servantEntry?.groupAssignments || []).forEach((assignment) => {
+      (assignment?.servedUserIds || []).forEach((servedId) => push(servedId));
+    });
+
+    if (groupNames.size > 0) {
+      (meeting?.groupAssignments || []).forEach((assignment) => {
+        if (!groupNames.has(this._normalizeText(assignment?.group))) return;
+        (assignment?.servedUserIds || []).forEach((servedId) => push(servedId));
+      });
+    }
+
+    return scopedUserIds;
+  }
+
+  async _resolveScopedAttendanceUserIds(actorUserId) {
+    const actorObjectId = this._toObjectId(actorUserId, 'actorUserId');
+    const meetings = await Meeting.find({
+      isDeleted: { $ne: true },
+      $or: [
+        { 'serviceSecretary.userId': actorObjectId },
+        { 'assistantSecretaries.userId': actorObjectId },
+        { 'servants.userId': actorObjectId },
+      ],
+    })
+      .select('serviceSecretary assistantSecretaries servants servedUserIds groupAssignments')
+      .lean();
+
+    const scopedUserIds = new Set();
+    meetings.forEach((meeting) => {
+      if (this._isMeetingLeadershipUser(meeting, actorUserId)) {
+        this._collectAllMeetingMemberIds(meeting).forEach((userId) => scopedUserIds.add(userId));
+        return;
+      }
+
+      const servantEntry = this._findMeetingServantEntry(meeting, actorUserId);
+      if (!servantEntry) return;
+
+      this._getServantScope(meeting, servantEntry).forEach((userId) => scopedUserIds.add(userId));
+    });
+
+    return scopedUserIds;
+  }
+
+  async _resolveAttendanceAccess({ actorUserId, userPermissions = [] } = {}) {
+    if (this._canManageAttendanceFully(userPermissions)) {
+      return { allowed: true, accessLevel: 'full', scopedUserIds: null };
+    }
+
+    if (!this._canManageAttendance(userPermissions)) {
+      return { allowed: false, accessLevel: 'none', scopedUserIds: new Set() };
+    }
+
+    if (!actorUserId) {
+      return { allowed: false, accessLevel: 'none', scopedUserIds: new Set() };
+    }
+
+    return {
+      allowed: true,
+      accessLevel: 'assigned',
+      scopedUserIds: await this._resolveScopedAttendanceUserIds(actorUserId),
+    };
   }
 
   async _clearUserCaches(userIds = []) {
@@ -329,7 +472,7 @@ class DivineLiturgiesService {
     );
   }
 
-  async _mapAttendanceRecord(record, attendanceDate, actorUserId) {
+  async _mapAttendanceRecord(record, attendanceDate, actorUserId, scopedUserIds = null) {
     const viewerAuditEntry = this._extractAttendanceViewerAuditEntry(record, actorUserId);
     const updatedById = this._toId(record?.updatedBy || record?.recordedBy);
     const viewerUpdatedById = this._toId(viewerAuditEntry?.actorUserId);
@@ -348,7 +491,11 @@ class DivineLiturgiesService {
 
     return {
       attendanceDate,
-      attendedUserIds: [...new Set((record?.attendedUserIds || []).map((value) => this._toId(value)).filter(Boolean))],
+      attendedUserIds: [...new Set(
+        (record?.attendedUserIds || [])
+          .map((value) => this._toId(value))
+          .filter((userId) => userId && (!scopedUserIds || scopedUserIds.has(userId)))
+      )],
       updatedAt: record?.updatedAt || null,
       updatedBy: updatedById
         ? {
@@ -487,13 +634,22 @@ class DivineLiturgiesService {
     };
   }
 
-  async getAttendanceContext(entryType, id, { userPermissions = [] } = {}) {
-    if (!this._canManageAttendance(userPermissions)) {
+  async getAttendanceContext(entryType, id, { actorUserId, userPermissions = [] } = {}) {
+    const accessContext = await this._resolveAttendanceAccess({ actorUserId, userPermissions });
+    if (!accessContext.allowed) {
       throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
     }
 
     const attendanceService = await this._loadAttendanceService(entryType, id);
-    const users = await User.find({ isDeleted: { $ne: true } })
+    const userFilter = accessContext.accessLevel === 'full'
+      ? { isDeleted: { $ne: true } }
+      : {
+          _id: {
+            $in: [...accessContext.scopedUserIds].map((userId) => this._toObjectId(userId, 'userId')),
+          },
+          isDeleted: { $ne: true },
+        };
+    const users = await User.find(userFilter)
       .select('fullName')
       .sort({ fullName: 1, _id: 1 })
       .lean();
@@ -505,6 +661,7 @@ class DivineLiturgiesService {
         fullName: user.fullName || '',
       })),
       canManageAttendance: true,
+      attendanceAccessLevel: accessContext.accessLevel,
     };
   }
 
@@ -514,7 +671,8 @@ class DivineLiturgiesService {
     attendanceDate,
     { actorUserId, userPermissions = [] } = {}
   ) {
-    if (!this._canManageAttendance(userPermissions)) {
+    const accessContext = await this._resolveAttendanceAccess({ actorUserId, userPermissions });
+    if (!accessContext.allowed) {
       throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
     }
 
@@ -548,7 +706,12 @@ class DivineLiturgiesService {
       };
     }
 
-    return this._mapAttendanceRecord(record, normalizedAttendanceDate, actorUserId);
+    return this._mapAttendanceRecord(
+      record,
+      normalizedAttendanceDate,
+      actorUserId,
+      accessContext.scopedUserIds
+    );
   }
 
   async updateAttendance(
@@ -558,7 +721,8 @@ class DivineLiturgiesService {
     attendedUserIds = [],
     { actorUserId, userPermissions = [] } = {}
   ) {
-    if (!this._canManageAttendance(userPermissions)) {
+    const accessContext = await this._resolveAttendanceAccess({ actorUserId, userPermissions });
+    if (!accessContext.allowed) {
       throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
     }
 
@@ -579,8 +743,34 @@ class DivineLiturgiesService {
         .map((value) => this._toId(value))
         .filter(Boolean)
     )];
+    const scopedUserIdsList = accessContext.scopedUserIds ? [...accessContext.scopedUserIds] : [];
 
-    await this._assertAttendanceUsersExist(normalizedAttendedUserIds);
+    if (accessContext.accessLevel === 'assigned' && scopedUserIdsList.length === 0) {
+      const existingRecord = await DivineLiturgyAttendance.findOne({
+        entryType: attendanceService.entryType,
+        serviceId: attendanceService.serviceId,
+        attendanceDate: normalizedAttendanceDate,
+      }).lean();
+
+      if (!existingRecord) {
+        return {
+          attendanceDate: normalizedAttendanceDate,
+          attendedUserIds: [],
+          updatedAt: null,
+          updatedBy: null,
+          viewerUpdatedAt: null,
+          viewerUpdatedBy: null,
+          canManageAttendance: true,
+        };
+      }
+
+      return this._mapAttendanceRecord(
+        existingRecord,
+        normalizedAttendanceDate,
+        actorUserId,
+        accessContext.scopedUserIds
+      );
+    }
 
     const actorObjectId = this._toObjectId(actorUserId, 'actorUserId');
     const now = new Date();
@@ -593,6 +783,21 @@ class DivineLiturgiesService {
     const previousAttendedUserIds = [...new Set(
       (record?.attendedUserIds || []).map((value) => this._toId(value)).filter(Boolean)
     )];
+    const selectedScopedUserIds = normalizedAttendedUserIds;
+
+    if (accessContext.accessLevel === 'assigned') {
+      const hasOutOfScopeSelection = selectedScopedUserIds.some(
+        (userId) => !accessContext.scopedUserIds.has(userId)
+      );
+      if (hasOutOfScopeSelection) {
+        throw ApiError.forbidden(
+          'You are not allowed to update attendance for this user',
+          'PERMISSION_DENIED'
+        );
+      }
+    }
+
+    await this._assertAttendanceUsersExist(normalizedAttendedUserIds);
 
     if (!record) {
       record = new DivineLiturgyAttendance({
@@ -605,7 +810,22 @@ class DivineLiturgiesService {
     }
 
     record.serviceType = attendanceService.service.serviceType;
-    record.attendedUserIds = normalizedAttendedUserIds.map((userId) =>
+    const nextAttendedUserIds = accessContext.accessLevel === 'assigned'
+      ? (() => {
+          const mergedUserIds = new Set(previousAttendedUserIds);
+          scopedUserIdsList.forEach((userId) => mergedUserIds.delete(userId));
+          selectedScopedUserIds.forEach((userId) => mergedUserIds.add(userId));
+          return [...mergedUserIds];
+        })()
+      : normalizedAttendedUserIds;
+    const previousAuditUserIds = accessContext.accessLevel === 'assigned'
+      ? previousAttendedUserIds.filter((userId) => accessContext.scopedUserIds.has(userId))
+      : previousAttendedUserIds;
+    const nextAuditUserIds = accessContext.accessLevel === 'assigned'
+      ? selectedScopedUserIds
+      : normalizedAttendedUserIds;
+
+    record.attendedUserIds = nextAttendedUserIds.map((userId) =>
       this._toObjectId(userId, 'attendedUserIds')
     );
     record.updatedBy = actorObjectId;
@@ -613,10 +833,10 @@ class DivineLiturgiesService {
     record.auditLog = record.auditLog || [];
     record.auditLog.push({
       actorUserId: actorObjectId,
-      previousAttendedUserIds: previousAttendedUserIds.map((userId) =>
+      previousAttendedUserIds: previousAuditUserIds.map((userId) =>
         this._toObjectId(userId, 'userId')
       ),
-      attendedUserIds: normalizedAttendedUserIds.map((userId) =>
+      attendedUserIds: nextAuditUserIds.map((userId) =>
         this._toObjectId(userId, 'userId')
       ),
       action: 'attendance_check_in_saved',
@@ -624,7 +844,9 @@ class DivineLiturgiesService {
     });
     await record.save();
 
-    const affectedUserIds = [...new Set([...previousAttendedUserIds, ...normalizedAttendedUserIds])];
+    const affectedUserIds = accessContext.accessLevel === 'assigned'
+      ? scopedUserIdsList
+      : [...new Set([...previousAttendedUserIds, ...normalizedAttendedUserIds])];
     if (affectedUserIds.length > 0) {
       await User.updateMany(
         {
@@ -645,10 +867,10 @@ class DivineLiturgiesService {
         }
       );
 
-      if (normalizedAttendedUserIds.length > 0) {
+      if (nextAuditUserIds.length > 0) {
         await User.updateMany(
           {
-            _id: { $in: normalizedAttendedUserIds.map((userId) => this._toObjectId(userId, 'userId')) },
+            _id: { $in: nextAuditUserIds.map((userId) => this._toObjectId(userId, 'userId')) },
             isDeleted: { $ne: true },
           },
           {
@@ -673,7 +895,12 @@ class DivineLiturgiesService {
       await this._clearUserCaches(affectedUserIds);
     }
 
-    return this._mapAttendanceRecord(record.toObject(), normalizedAttendanceDate, actorUserId);
+    return this._mapAttendanceRecord(
+      record.toObject(),
+      normalizedAttendanceDate,
+      actorUserId,
+      accessContext.scopedUserIds
+    );
   }
 
   async createRecurring(payload, actorUserId) {

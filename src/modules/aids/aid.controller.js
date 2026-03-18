@@ -30,6 +30,12 @@ const getAidDetails = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, { data });
 });
 
+const searchAidHistory = asyncHandler(async (req, res) => {
+  const data = await aidService.searchAidHistory(req.body.houseNames);
+
+  return ApiResponse.success(res, { data });
+});
+
 const approveAidReminder = asyncHandler(async (req, res) => {
   const data = await aidService.approveAidReminder(req.params.id, req.user.id);
 
@@ -49,5 +55,6 @@ module.exports = {
   getAidOptions,
   getDisbursedAids,
   getAidDetails,
+  searchAidHistory,
   updateFullAidGroup,
 };

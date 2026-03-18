@@ -38,6 +38,13 @@ router.get(
 );
 
 router.post(
+  '/history/search',
+  authorizePermissions(PERMISSIONS.HOUSEHOLD_CLASSIFICATIONS_VIEW),
+  validate(aidValidators.searchAidHistoryBody),
+  aidController.searchAidHistory
+);
+
+router.post(
   '/reminders/:id/approve',
   authorizePermissions(PERMISSIONS.HOUSEHOLD_CLASSIFICATIONS_MANAGE),
   validate(aidValidators.approveAidReminderParams),

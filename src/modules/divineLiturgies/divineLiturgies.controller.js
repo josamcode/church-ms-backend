@@ -12,6 +12,7 @@ const getOverview = asyncHandler(async (_req, res) => {
 
 const getAttendanceContext = asyncHandler(async (req, res) => {
   const data = await divineLiturgiesService.getAttendanceContext(req.params.entryType, req.params.id, {
+    actorUserId: req.user.id,
     userPermissions: req.userPermissions,
   });
   return ApiResponse.success(res, {
