@@ -27,7 +27,7 @@ const uploadNotificationImage = asyncHandler(async (req, res) => {
 });
 
 const listNotifications = asyncHandler(async (req, res) => {
-  const { cursor, limit, order, typeId, q, isActive } = req.query;
+  const { cursor, limit, order, typeId, q, isActive, sourceType, excludeSourceType } = req.query;
 
   const parsedIsActive =
     isActive === undefined
@@ -42,10 +42,13 @@ const listNotifications = asyncHandler(async (req, res) => {
     cursor,
     limit: parseInt(limit, 10) || 20,
     order: order || 'desc',
+    userPermissions: req.userPermissions || [],
     filters: {
       typeId,
       q,
       isActive: parsedIsActive,
+      sourceType,
+      excludeSourceType,
     },
   });
 
@@ -65,7 +68,10 @@ const createNotification = asyncHandler(async (req, res) => {
 });
 
 const getNotificationById = asyncHandler(async (req, res) => {
-  const notification = await notificationsService.getNotificationById(req.params.id);
+  const notification = await notificationsService.getNotificationById(
+    req.params.id,
+    req.userPermissions || []
+  );
   return ApiResponse.success(res, {
     message: 'Notification loaded successfully',
     data: notification,

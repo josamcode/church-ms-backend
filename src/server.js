@@ -2,28 +2,28 @@ const app = require('./app');
 const config = require('./config/env');
 const connectDB = require('./config/db');
 const logger = require('./utils/logger');
+const aidReminderService = require('./modules/aids/aidReminder.service');
 
 const startServer = async () => {
   try {
-    // Connect to MongoDB
     await connectDB();
 
     const server = app.listen(config.port, '0.0.0.0', () => {
-      logger.info(`الخادم يعمل على المنفذ ${config.port} في بيئة ${config.env}`);
-      logger.info(`التوثيق متاح على http://localhost:${config.port}/api/docs`);
+      logger.info(`Server listening on port ${config.port} in ${config.env}`);
+      logger.info(`API docs available at http://localhost:${config.port}/api/docs`);
     });
+    aidReminderService.start();
 
-    // Graceful shutdown
     const gracefulShutdown = (signal) => {
-      logger.info(`استلام إشارة ${signal}. إيقاف الخادم...`);
+      logger.info(`Received ${signal}. Shutting down server...`);
+      aidReminderService.stop();
       server.close(() => {
-        logger.info('تم إغلاق الخادم بنجاح');
+        logger.info('Server closed successfully');
         process.exit(0);
       });
 
-      // Force shutdown after 10s
       setTimeout(() => {
-        logger.error('لم يتم إغلاق الخادم بشكل طبيعي، إغلاق قسري');
+        logger.error('Forced shutdown after timeout');
         process.exit(1);
       }, 10000);
     };
@@ -32,18 +32,18 @@ const startServer = async () => {
     process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
     process.on('unhandledRejection', (err) => {
-      logger.error(`خطأ غير معالج (Unhandled Rejection): ${err.message}`);
+      logger.error(`Unhandled Rejection: ${err.message}`);
       logger.error(err.stack);
       gracefulShutdown('unhandledRejection');
     });
 
     process.on('uncaughtException', (err) => {
-      logger.error(`خطأ غير ملتقط (Uncaught Exception): ${err.message}`);
+      logger.error(`Uncaught Exception: ${err.message}`);
       logger.error(err.stack);
       gracefulShutdown('uncaughtException');
     });
   } catch (error) {
-    logger.error(`فشل تشغيل الخادم: ${error.message}`);
+    logger.error(`Server startup failed: ${error.message}`);
     process.exit(1);
   }
 };

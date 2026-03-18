@@ -11,6 +11,29 @@ const NotificationType = require('./notificationType.model');
 const { seedDefaultNotificationTypes } = NotificationType;
 
 class NotificationsService {
+  _buildAudienceQuery(userPermissions = []) {
+    return {
+      $or: [
+        { audienceType: { $exists: false } },
+        { audienceType: 'all' },
+        {
+          audienceType: 'permissions',
+          audiencePermissions: { $in: Array.isArray(userPermissions) ? userPermissions : [] },
+        },
+      ],
+    };
+  }
+
+  _canAccessNotification(notification, userPermissions = []) {
+    if (!notification) return false;
+
+    const audienceType = String(notification.audienceType || 'all').trim().toLowerCase();
+    if (audienceType !== 'permissions') return true;
+
+    const permissionSet = new Set(Array.isArray(userPermissions) ? userPermissions : []);
+    return (notification.audiencePermissions || []).some((permission) => permissionSet.has(permission));
+  }
+
   _toObjectId(id, fieldName = 'id') {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       throw ApiError.badRequest(`Invalid ${fieldName}`, 'VALIDATION_ERROR');
@@ -62,6 +85,12 @@ class NotificationsService {
       eventDate: notification.eventDate || null,
       coverImageUrl: notification.coverImageUrl || '',
       isActive: notification.isActive !== false,
+      audienceType: notification.audienceType || 'all',
+      audiencePermissions: Array.isArray(notification.audiencePermissions)
+        ? notification.audiencePermissions
+        : [],
+      sourceType: notification.sourceType || '',
+      sourceData: notification.sourceData || null,
       createdBy: creatorId || null,
       createdByUser: creatorId
         ? {
@@ -172,8 +201,9 @@ class NotificationsService {
     };
   }
 
-  async listNotifications({ cursor, limit = 20, order = 'desc', filters = {} }) {
+  async listNotifications({ cursor, limit = 20, order = 'desc', filters = {}, userPermissions = [] }) {
     const query = {};
+    const andConditions = [this._buildAudienceQuery(userPermissions)];
 
     if (filters.typeId) {
       query.typeId = this._toObjectId(filters.typeId, 'typeId');
@@ -183,11 +213,24 @@ class NotificationsService {
       query.isActive = filters.isActive;
     }
 
+    if (filters.sourceType) {
+      query.sourceType = String(filters.sourceType).trim();
+    }
+
+    if (filters.excludeSourceType) {
+      query.sourceType = {
+        ...(query.sourceType && typeof query.sourceType === 'object' ? query.sourceType : {}),
+        $ne: String(filters.excludeSourceType).trim(),
+      };
+    }
+
     if (filters.q) {
-      query.$or = [
-        { name: { $regex: filters.q, $options: 'i' } },
-        { summary: { $regex: filters.q, $options: 'i' } },
-      ];
+      andConditions.push({
+        $or: [
+          { name: { $regex: filters.q, $options: 'i' } },
+          { summary: { $regex: filters.q, $options: 'i' } },
+        ],
+      });
     }
 
     const createdAtQuery = {};
@@ -200,6 +243,10 @@ class NotificationsService {
 
     if (Object.keys(createdAtQuery).length > 0) {
       query.createdAt = createdAtQuery;
+    }
+
+    if (andConditions.length > 0) {
+      query.$and = andConditions;
     }
 
     const sortDirection = order === 'desc' ? -1 : 1;
@@ -239,7 +286,7 @@ class NotificationsService {
     return this.getNotificationById(created._id);
   }
 
-  async getNotificationById(id) {
+  async getNotificationById(id, userPermissions = []) {
     const notification = await Notification.findById(this._toObjectId(id))
       .populate('typeId', 'name')
       .populate('createdBy', 'fullName')
@@ -247,6 +294,10 @@ class NotificationsService {
       .lean();
 
     if (!notification) {
+      throw ApiError.notFound('Notification not found', 'RESOURCE_NOT_FOUND');
+    }
+
+    if (!this._canAccessNotification(notification, userPermissions)) {
       throw ApiError.notFound('Notification not found', 'RESOURCE_NOT_FOUND');
     }
 

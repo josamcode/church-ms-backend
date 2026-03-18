@@ -37,6 +37,13 @@ router.get(
   aidController.getAidDetails
 );
 
+router.post(
+  '/reminders/:id/approve',
+  authorizePermissions(PERMISSIONS.HOUSEHOLD_CLASSIFICATIONS_MANAGE),
+  validate(aidValidators.approveAidReminderParams),
+  aidController.approveAidReminder
+);
+
 router.put(
   '/',
   authorizePermissions(PERMISSIONS.HOUSEHOLD_CLASSIFICATIONS_MANAGE),

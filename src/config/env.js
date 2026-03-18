@@ -69,4 +69,8 @@ module.exports = {
     userTTL: parseInt(process.env.CACHE_USER_TTL, 10) || 3600,
     permissionsTTL: parseInt(process.env.CACHE_PERMISSIONS_TTL, 10) || 1800,
   },
+
+  aidReminders: {
+    pollIntervalMs: parseInt(process.env.AID_REMINDER_POLL_INTERVAL_MS, 10) || 60 * 60 * 1000,
+  },
 };

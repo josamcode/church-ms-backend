@@ -4,6 +4,7 @@ const DEFAULT_NOTIFICATION_TYPES = [
   { name: 'General Announcement', order: 1 },
   { name: 'Event', order: 2 },
   { name: 'Congratulations', order: 3 },
+  { name: 'Aid Reminder', order: 4 },
 ];
 
 const notificationTypeSchema = new mongoose.Schema(

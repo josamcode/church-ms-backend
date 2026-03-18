@@ -75,6 +75,38 @@ const notificationSchema = new mongoose.Schema(
       default: true,
       index: true,
     },
+    audienceType: {
+      type: String,
+      enum: ['all', 'permissions'],
+      default: 'all',
+      index: true,
+    },
+    audiencePermissions: {
+      type: [String],
+      default: [],
+    },
+    sourceType: {
+      type: String,
+      trim: true,
+      maxlength: 80,
+      index: true,
+    },
+    sourceKey: {
+      type: String,
+      trim: true,
+      maxlength: 128,
+      index: true,
+    },
+    sourceGroupKey: {
+      type: String,
+      trim: true,
+      maxlength: 128,
+      index: true,
+    },
+    sourceData: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -90,6 +122,16 @@ const notificationSchema = new mongoose.Schema(
 
 notificationSchema.index({ createdAt: -1, _id: -1 });
 notificationSchema.index({ typeId: 1, createdAt: -1 });
+notificationSchema.index(
+  { sourceType: 1, sourceKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      sourceType: { $exists: true },
+      sourceKey: { $exists: true },
+    },
+  }
+);
 
 const Notification = mongoose.model('Notification', notificationSchema);
 

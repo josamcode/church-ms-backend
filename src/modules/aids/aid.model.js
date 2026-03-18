@@ -44,6 +44,20 @@ const aidSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    isRecurringSource: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+    recurrenceAnchorDate: {
+      type: Date,
+      index: true,
+    },
+    reminderNotificationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Notification',
+      index: true,
+    },
   },
   { timestamps: true }
 );

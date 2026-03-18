@@ -31,6 +31,12 @@ const getAidDetailsQuery = {
   }),
 };
 
+const approveAidReminderParams = {
+  params: Joi.object({
+    id: Joi.string().trim().hex().length(24).required(),
+  }),
+};
+
 const updateFullAidGroupBody = {
   body: Joi.object({
     originalGroup: Joi.object({
@@ -51,6 +57,7 @@ const updateFullAidGroupBody = {
 };
 
 module.exports = {
+  approveAidReminderParams,
   createBulkAidsBody,
   getDisbursedAidsQuery,
   getAidDetailsQuery,

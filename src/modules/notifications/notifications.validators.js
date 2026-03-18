@@ -75,6 +75,8 @@ const listNotifications = {
     typeId: Joi.string().pattern(OBJECT_ID_PATTERN).optional(),
     q: Joi.string().trim().max(200).optional(),
     isActive: Joi.boolean().optional(),
+    sourceType: Joi.string().trim().max(80).optional(),
+    excludeSourceType: Joi.string().trim().max(80).optional(),
   }),
 };
 
