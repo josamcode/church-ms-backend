@@ -52,6 +52,14 @@ const getMe = asyncHandler(async (req, res) => {
   });
 });
 
+const updateMySettings = asyncHandler(async (req, res) => {
+  const user = await authService.updateMySettings(req.user.id, req.body);
+  return ApiResponse.success(res, {
+    message: 'Account settings updated successfully',
+    data: user,
+  });
+});
+
 const changePassword = asyncHandler(async (req, res) => {
   await authService.changePassword(
     req.user.id,
@@ -69,5 +77,6 @@ module.exports = {
   refresh,
   logout,
   getMe,
+  updateMySettings,
   changePassword,
 };

@@ -3,8 +3,10 @@ const User = require('../users/user.model');
 const ConfessionSession = require('./confessionSession.model');
 const ConfessionSessionType = require('./confessionSessionType.model');
 const ConfessionConfig = require('./confessionConfig.model');
+const ChurchPriest = require('../divineLiturgies/churchPriest.model');
 const ApiError = require('../../utils/ApiError');
 const { PERMISSIONS } = require('../../constants/permissions');
+const { ROLES } = require('../../constants/roles');
 const { buildPaginationMeta } = require('../../utils/pagination');
 
 const { seedDefaultSessionTypes } = ConfessionSessionType;
@@ -78,7 +80,7 @@ class ConfessionsService {
     }
 
     const attendee = await User.findById(resolvedAttendeeUserId)
-      .select('fullName phonePrimary avatar role')
+      .select('fullName phonePrimary avatar role confessionFatherUserId')
       .lean();
 
     if (!attendee) {
@@ -95,6 +97,22 @@ class ConfessionsService {
       throw ApiError.notFound('Session type not found', 'RESOURCE_NOT_FOUND');
     }
     return sessionType;
+  }
+
+  async _resolveRecordingActor(actorUserId) {
+    const [actor, isChurchPriest] = await Promise.all([
+      User.findById(actorUserId).select('fullName role').lean(),
+      ChurchPriest.exists({ userId: actorUserId }),
+    ]);
+
+    if (!actor) {
+      return null;
+    }
+
+    return {
+      ...actor,
+      isChurchPriest: Boolean(isChurchPriest),
+    };
   }
 
   async _buildAlerts({ thresholdDays, fullName }) {
@@ -232,6 +250,7 @@ class ConfessionsService {
       actorPermissions
     );
     const sessionType = await this._resolveSessionType(payload.sessionTypeId);
+    const recordingActor = await this._resolveRecordingActor(actorUserId);
 
     const session = await ConfessionSession.create({
       attendeeUserId: attendee._id,
@@ -244,6 +263,27 @@ class ConfessionsService {
       createdBy: actorUserId,
     });
 
+    const attendeeUpdate = {
+      $addToSet: {
+        confessionSessionIds: session._id,
+      },
+    };
+
+    const shouldSetByChurchPriest = recordingActor?.isChurchPriest && recordingActor?._id;
+    const shouldSetOnceBySuperAdmin =
+      recordingActor?.role === ROLES.SUPER_ADMIN &&
+      recordingActor?._id &&
+      !attendee.confessionFatherUserId;
+
+    if (shouldSetByChurchPriest || shouldSetOnceBySuperAdmin) {
+      attendeeUpdate.$set = {
+        confessionFatherUserId: recordingActor._id,
+        confessionFatherName: recordingActor.fullName,
+      };
+    }
+
+    await User.findByIdAndUpdate(attendee._id, attendeeUpdate);
+
     const populated = await ConfessionSession.findById(session._id)
       .populate('attendeeUserId', 'fullName phonePrimary avatar role')
       .populate('sessionTypeId', 'name')
@@ -253,14 +293,23 @@ class ConfessionsService {
     return this._mapSession(populated);
   }
 
-  async listSessions({ cursor, limit = 20, order = 'desc', filters = {} }) {
-    const query = {};
+  async listSessions({ cursor, limit = 20, order = 'desc', filters = {}, viewerUserId }) {
+    const conditions = [];
 
     if (filters.attendeeUserId) {
-      query.attendeeUserId = this._toObjectId(filters.attendeeUserId, 'attendeeUserId');
+      conditions.push({
+        attendeeUserId: this._toObjectId(filters.attendeeUserId, 'attendeeUserId'),
+      });
+    }
+    if (filters.createdByUserId) {
+      conditions.push({
+        createdBy: this._toObjectId(filters.createdByUserId, 'createdByUserId'),
+      });
     }
     if (filters.sessionTypeId) {
-      query.sessionTypeId = this._toObjectId(filters.sessionTypeId, 'sessionTypeId');
+      conditions.push({
+        sessionTypeId: this._toObjectId(filters.sessionTypeId, 'sessionTypeId'),
+      });
     }
 
     const scheduledAtQuery = {};
@@ -284,10 +333,34 @@ class ConfessionsService {
       }
     }
     if (Object.keys(scheduledAtQuery).length > 0) {
-      query.scheduledAt = scheduledAtQuery;
+      conditions.push({ scheduledAt: scheduledAtQuery });
+    }
+
+    const isViewingOwnCreatedSessionsOnly =
+      viewerUserId &&
+      filters.createdByUserId &&
+      String(filters.createdByUserId) === String(viewerUserId);
+
+    if (!isViewingOwnCreatedSessionsOnly && viewerUserId) {
+      const hiddenCreatorIds = await User.find({
+        allowOthersToViewCreatedConfessionSessions: false,
+        _id: { $ne: this._toObjectId(viewerUserId, 'viewerUserId') },
+      })
+        .select('_id')
+        .lean();
+
+      if (hiddenCreatorIds.length > 0) {
+        conditions.push({
+          createdBy: {
+            $nin: hiddenCreatorIds.map((entry) => entry._id),
+          },
+        });
+      }
     }
 
     const sortDirection = order === 'desc' ? -1 : 1;
+    const query =
+      conditions.length === 0 ? {} : conditions.length === 1 ? conditions[0] : { $and: conditions };
 
     const sessions = await ConfessionSession.find(query)
       .sort({ scheduledAt: sortDirection, _id: sortDirection })

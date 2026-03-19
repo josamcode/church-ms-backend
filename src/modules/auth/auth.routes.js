@@ -46,6 +46,14 @@ router.get(
   authController.getMe
 );
 
+router.patch(
+  '/me/settings',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.AUTH_VIEW_SELF),
+  validate(authValidators.updateMySettings),
+  authController.updateMySettings
+);
+
 router.post(
   '/change-password',
   authenticateJWT,

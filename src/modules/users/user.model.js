@@ -350,6 +350,10 @@ const userSchema = new mongoose.Schema(
     confessionSessionIds: [
       { type: mongoose.Schema.Types.ObjectId, ref: 'ConfessionSession' },
     ],
+    allowOthersToViewCreatedConfessionSessions: {
+      type: Boolean,
+      default: true,
+    },
     meetingIds: [
       { type: mongoose.Schema.Types.ObjectId, ref: 'Meeting' },
     ],
@@ -410,6 +414,7 @@ userSchema.index({ 'father.userId': 1 }, { sparse: true });
 userSchema.index({ 'mother.userId': 1 }, { sparse: true });
 userSchema.index({ 'spouse.userId': 1 }, { sparse: true });
 userSchema.index({ 'familyMembers.userId': 1 }, { sparse: true });
+userSchema.index({ allowOthersToViewCreatedConfessionSessions: 1 });
 
 /* ──────────────── Virtuals ──────────────── */
 

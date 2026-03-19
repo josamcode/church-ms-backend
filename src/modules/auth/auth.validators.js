@@ -80,10 +80,20 @@ const changePassword = {
   }),
 };
 
+const updateMySettings = {
+  body: Joi.object({
+    allowOthersToViewCreatedConfessionSessions: Joi.boolean().required().messages({
+      'boolean.base': 'Confession session visibility must be true or false',
+      'any.required': 'Confession session visibility is required',
+    }),
+  }),
+};
+
 module.exports = {
   register,
   login,
   refreshToken,
   logout,
   changePassword,
+  updateMySettings,
 };

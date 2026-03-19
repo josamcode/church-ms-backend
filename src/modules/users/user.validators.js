@@ -150,6 +150,7 @@ const createUser = {
       .items(Joi.string().valid(...PERMISSIONS_ARRAY))
       .optional(),
     confessionFatherName: Joi.string().trim().allow('', null).optional(),
+    confessionFatherUserId: Joi.string().pattern(OBJECT_ID_PATTERN).allow('', null).optional(),
     avatar: Joi.object({
       url: Joi.string().uri().required(),
       publicId: Joi.string().required(),
@@ -196,6 +197,7 @@ const updateUser = {
       .items(Joi.string().valid(...PERMISSIONS_ARRAY))
       .optional(),
     confessionFatherName: Joi.string().trim().allow(null, '').optional(),
+    confessionFatherUserId: Joi.string().pattern(OBJECT_ID_PATTERN).allow(null, '').optional(),
     avatar: Joi.object({
       url: Joi.string().uri().allow(null),
       publicId: Joi.string().allow(null),

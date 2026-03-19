@@ -35,6 +35,7 @@ const listSessions = {
     limit: Joi.number().integer().min(1).max(100).default(20),
     order: Joi.string().valid('asc', 'desc').default('desc'),
     attendeeUserId: Joi.string().pattern(OBJECT_ID_PATTERN).optional(),
+    createdByUserId: Joi.string().pattern(OBJECT_ID_PATTERN).optional(),
     sessionTypeId: Joi.string().pattern(OBJECT_ID_PATTERN).optional(),
     dateFrom: Joi.date().iso().optional(),
     dateTo: Joi.date().iso().optional(),

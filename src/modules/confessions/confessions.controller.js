@@ -27,14 +27,17 @@ const createSession = asyncHandler(async (req, res) => {
 });
 
 const listSessions = asyncHandler(async (req, res) => {
-  const { cursor, limit, order, attendeeUserId, sessionTypeId, dateFrom, dateTo } = req.query;
+  const { cursor, limit, order, attendeeUserId, createdByUserId, sessionTypeId, dateFrom, dateTo } =
+    req.query;
 
   const { sessions, meta } = await confessionsService.listSessions({
     cursor,
     limit: parseInt(limit, 10) || 20,
     order: order || 'desc',
+    viewerUserId: req.user.id,
     filters: {
       attendeeUserId,
+      createdByUserId,
       sessionTypeId,
       dateFrom,
       dateTo,

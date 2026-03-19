@@ -276,6 +276,49 @@ class AuthService {
     return user;
   }
 
+  async updateMySettings(userId, data) {
+    const user = await User.findById(userId);
+    if (!user) {
+      throw ApiError.notFound('ط§ظ„ظ…ط³طھط®ط¯ظ… ط؛ظٹط± ظ…ظˆط¬ظˆط¯', 'USER_NOT_FOUND');
+    }
+
+    const changes = [];
+    if (data.allowOthersToViewCreatedConfessionSessions !== undefined) {
+      const nextValue = Boolean(data.allowOthersToViewCreatedConfessionSessions);
+      const previousValue = user.allowOthersToViewCreatedConfessionSessions !== false;
+
+      if (previousValue !== nextValue) {
+        changes.push({
+          field: 'allowOthersToViewCreatedConfessionSessions',
+          from: previousValue,
+          to: nextValue,
+        });
+        user.allowOthersToViewCreatedConfessionSessions = nextValue;
+      }
+    }
+
+    if (changes.length === 0) {
+      return user.toSafeObject();
+    }
+
+    user.updatedBy = userId;
+    user.changeLog.push({
+      by: userId,
+      action: 'Update account settings',
+      changes,
+    });
+
+    await user.save();
+
+    try {
+      await redisClient.del(CACHE_KEYS.USER_PROFILE(userId));
+    } catch (_error) {
+      // Non-fatal
+    }
+
+    return user.toSafeObject();
+  }
+
   /**
    * تغيير كلمة المرور
    */

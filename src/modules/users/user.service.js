@@ -33,6 +33,43 @@ class UserService {
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }
 
+  async _normalizeConfessionFatherFields(data = {}) {
+    if (data.confessionFatherUserId === undefined && data.confessionFatherName === undefined) {
+      return data;
+    }
+
+    const normalized = { ...data };
+    const rawUserId = data.confessionFatherUserId;
+
+    if (rawUserId !== undefined) {
+      if (rawUserId === null || rawUserId === '') {
+        normalized.confessionFatherUserId = null;
+        normalized.confessionFatherName = null;
+        return normalized;
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(rawUserId)) {
+        throw ApiError.badRequest('Invalid spiritual father user id', 'VALIDATION_ERROR');
+      }
+
+      const confessionFather = await User.findById(rawUserId).select('fullName').lean();
+      if (!confessionFather) {
+        throw ApiError.notFound('Spiritual father user not found', 'USER_NOT_FOUND');
+      }
+
+      normalized.confessionFatherUserId = confessionFather._id;
+      normalized.confessionFatherName = confessionFather.fullName;
+      return normalized;
+    }
+
+    const trimmedName =
+      typeof data.confessionFatherName === 'string' ? data.confessionFatherName.trim() : '';
+
+    normalized.confessionFatherName = trimmedName || null;
+    normalized.confessionFatherUserId = null;
+    return normalized;
+  }
+
   _getRecurringDivineLiturgyDisplayName(service) {
     const serviceLabel =
       service?.serviceType === SERVICE_TYPES.DIVINE_LITURGY
@@ -86,39 +123,46 @@ class UserService {
    * إنشاء مستخدم جديد (مع أو بدون تسجيل دخول)
    */
   async createUser(data, createdByUserId) {
+    const normalizedData = await this._normalizeConfessionFatherFields(data);
+
     await this._assertRoleAndPermissionManagementAllowed({
       actorUserId: createdByUserId,
       targetUser: null,
-      updateData: data,
+      updateData: normalizedData,
     });
 
-    const orConditions = [{ phonePrimary: data.phonePrimary }];
-    if (data.email) orConditions.push({ email: data.email });
-    if (data.nationalId) orConditions.push({ nationalId: data.nationalId });
+    const orConditions = [{ phonePrimary: normalizedData.phonePrimary }];
+    if (normalizedData.email) orConditions.push({ email: normalizedData.email });
+    if (normalizedData.nationalId) orConditions.push({ nationalId: normalizedData.nationalId });
 
     const existing = await User.findOne({ $or: orConditions }).lean();
 
     if (existing) {
-      if (existing.phonePrimary === data.phonePrimary) {
+      if (existing.phonePrimary === normalizedData.phonePrimary) {
         throw ApiError.conflict('رقم الهاتف مسجل مسبقاً', 'DUPLICATE_PHONE');
       }
-      if (data.email && existing.email === data.email) {
+      if (normalizedData.email && existing.email === normalizedData.email) {
         throw ApiError.conflict('البريد الإلكتروني مسجل مسبقاً', 'DUPLICATE_EMAIL');
       }
-      if (data.nationalId && existing.nationalId === data.nationalId) {
+      if (normalizedData.nationalId && existing.nationalId === normalizedData.nationalId) {
         throw ApiError.conflict('الرقم القومي مسجل مسبقاً', 'DUPLICATE_NATIONAL_ID');
       }
     }
 
-    const userData = { ...data, createdBy: createdByUserId };
-    if (data.avatar && typeof data.avatar === 'object' && data.avatar.url && data.avatar.publicId) {
-      userData.avatar = { url: data.avatar.url, publicId: data.avatar.publicId };
+    const userData = { ...normalizedData, createdBy: createdByUserId };
+    if (
+      normalizedData.avatar &&
+      typeof normalizedData.avatar === 'object' &&
+      normalizedData.avatar.url &&
+      normalizedData.avatar.publicId
+    ) {
+      userData.avatar = { url: normalizedData.avatar.url, publicId: normalizedData.avatar.publicId };
     }
 
-    if (data.password) {
+    if (normalizedData.password) {
       userData.hasLogin = true;
-      userData.passwordHash = data.password;
-      userData.loginIdentifierType = data.email ? 'email' : 'phone';
+      userData.passwordHash = normalizedData.password;
+      userData.loginIdentifierType = normalizedData.email ? 'email' : 'phone';
       delete userData.password;
     }
 
@@ -648,6 +692,7 @@ class UserService {
    * تحديث بيانات المستخدم
    */
   async updateUser(userId, data, updatedByUserId) {
+    const normalizedData = await this._normalizeConfessionFatherFields(data);
     const user = await User.findById(userId);
     if (!user) {
       throw ApiError.notFound('المستخدم غير موجود', 'USER_NOT_FOUND');
@@ -656,7 +701,7 @@ class UserService {
     await this._assertRoleAndPermissionManagementAllowed({
       actorUserId: updatedByUserId,
       targetUser: user,
-      updateData: data,
+      updateData: normalizedData,
     });
 
     const allowedFields = [
@@ -674,9 +719,9 @@ class UserService {
     const authSensitiveFields = new Set(['role', 'hasLogin', 'extraPermissions', 'deniedPermissions']);
 
     for (const field of allowedFields) {
-      if (data[field] !== undefined) {
+      if (normalizedData[field] !== undefined) {
         const oldVal = user[field];
-        const newVal = data[field];
+        const newVal = normalizedData[field];
 
         if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
           changes.push({
@@ -692,8 +737,8 @@ class UserService {
       }
     }
 
-    if (data.password !== undefined && data.hasLogin !== false) {
-      const nextPassword = typeof data.password === 'string' ? data.password.trim() : '';
+    if (normalizedData.password !== undefined && normalizedData.hasLogin !== false) {
+      const nextPassword = typeof normalizedData.password === 'string' ? normalizedData.password.trim() : '';
       if (nextPassword) {
         if (!user.hasLogin) {
           changes.push({
@@ -705,8 +750,8 @@ class UserService {
         }
 
         const nextLoginIdentifierType =
-          data.email !== undefined
-            ? (data.email ? 'email' : 'phone')
+          normalizedData.email !== undefined
+            ? (normalizedData.email ? 'email' : 'phone')
             : (user.email ? 'email' : 'phone');
 
         if (user.loginIdentifierType !== nextLoginIdentifierType) {

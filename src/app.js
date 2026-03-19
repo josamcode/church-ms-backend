@@ -16,6 +16,7 @@ const logger = require('./utils/logger');
 const authRoutes = require('./modules/auth/auth.routes');
 const userRoutes = require('./modules/users/user.routes');
 const settingsRoutes = require('./modules/settings/settings.routes');
+const landingContentRoutes = require('./modules/landingContent/landingContent.routes');
 const confessionsRoutes = require('./modules/confessions/confessions.routes');
 const visitationsRoutes = require('./modules/visitations/visitations.routes');
 const meetingsRoutes = require('./modules/meetings/meetings.routes');
@@ -90,6 +91,7 @@ app.use(
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/landing-content', landingContentRoutes);
 app.use('/api/confessions', confessionsRoutes);
 app.use('/api/visitations', visitationsRoutes);
 app.use('/api/meetings', meetingsRoutes);
