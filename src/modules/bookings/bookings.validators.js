@@ -180,7 +180,7 @@ const createPublicBooking = {
     requesterPhone: Joi.string().trim().min(3).max(40).required(),
     requesterEmail: Joi.string().email().trim().max(160).allow('', null).optional(),
     scheduledDate: Joi.string().pattern(DATE_PATTERN).required(),
-    scheduledTime: Joi.string().pattern(TIME_PATTERN).required(),
+    scheduledTime: Joi.string().pattern(TIME_PATTERN).allow('', null).optional(),
     notes: Joi.string().trim().max(5000).allow('', null).optional(),
     dynamicFields: Joi.array()
       .items(

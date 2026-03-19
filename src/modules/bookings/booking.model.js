@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 
+const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
 const BOOKING_STATUSES = Object.freeze({
   PENDING: 'pending',
   CONFIRMED: 'confirmed',
@@ -87,9 +89,12 @@ const bookingSchema = new mongoose.Schema(
     },
     scheduledTime: {
       type: String,
-      required: true,
+      default: null,
       trim: true,
-      match: /^([01]\d|2[0-3]):([0-5]\d)$/,
+      validate: {
+        validator: (value) => value == null || TIME_PATTERN.test(value),
+        message: 'Scheduled time must be a valid HH:mm value',
+      },
     },
     scheduledAt: {
       type: Date,

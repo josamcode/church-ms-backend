@@ -196,7 +196,7 @@ class BookingsService {
         email: booking.requester?.email || '',
       },
       scheduledDate: booking.scheduledDate,
-      scheduledTime: booking.scheduledTime,
+      scheduledTime: booking.scheduledTime || '',
       scheduledAt: booking.scheduledAt,
       notes: booking.notes || '',
       additionalFields: Array.isArray(booking.additionalFields)
@@ -230,6 +230,14 @@ class BookingsService {
     return (
       mode === AVAILABILITY_MODES.SPECIFIC_DATES_TIME ||
       mode === AVAILABILITY_MODES.DATE_TIME
+    );
+  }
+
+  _modeRequiresTime(mode) {
+    return (
+      mode === AVAILABILITY_MODES.DATE_TIME_RANGE ||
+      mode === AVAILABILITY_MODES.SPECIFIC_DAYS_TIME ||
+      this._isExactTimeMode(mode)
     );
   }
 
@@ -396,7 +404,7 @@ class BookingsService {
 
     const counts = new Map();
     bookings.forEach((booking) => {
-      const key = `${booking.scheduledDate}|${booking.scheduledTime}`;
+      const key = `${booking.scheduledDate}|${booking.scheduledTime || ''}`;
       counts.set(key, (counts.get(key) || 0) + 1);
     });
     return counts;
@@ -618,7 +626,7 @@ class BookingsService {
 
   async _assertCapacityAvailable(type, scheduledDate, scheduledTime) {
     const bookedCounts = await this._getBookedSlotCounts(type._id, scheduledDate, scheduledDate);
-    const booked = bookedCounts.get(`${scheduledDate}|${scheduledTime}`) || 0;
+    const booked = bookedCounts.get(`${scheduledDate}|${scheduledTime || ''}`) || 0;
     const remaining = Math.max((type.capacity || 1) - booked, 0);
 
     if (remaining <= 0) {
@@ -627,7 +635,12 @@ class BookingsService {
   }
 
   _assertRequestedScheduleAllowed(type, scheduledDate, scheduledTime) {
-    if (!this._isValidDateString(scheduledDate) || !this._isValidTimeString(scheduledTime)) {
+    if (!this._isValidDateString(scheduledDate)) {
+      throw ApiError.badRequest('Scheduled slot is invalid', 'VALIDATION_ERROR');
+    }
+
+    const requiresTime = this._modeRequiresTime(type.availabilityMode);
+    if (requiresTime && !this._isValidTimeString(scheduledTime)) {
       throw ApiError.badRequest('Scheduled slot is invalid', 'VALIDATION_ERROR');
     }
 
@@ -705,10 +718,14 @@ class BookingsService {
       throw ApiError.badRequest('This booking type is not currently available', 'VALIDATION_ERROR');
     }
 
-    this._assertRequestedScheduleAllowed(type, payload.scheduledDate, payload.scheduledTime);
-    await this._assertCapacityAvailable(type, payload.scheduledDate, payload.scheduledTime);
+    const scheduledTime = this._modeRequiresTime(type.availabilityMode)
+      ? payload.scheduledTime
+      : null;
 
-    const scheduledAt = this._createUtcDate(payload.scheduledDate, payload.scheduledTime);
+    this._assertRequestedScheduleAllowed(type, payload.scheduledDate, scheduledTime);
+    await this._assertCapacityAvailable(type, payload.scheduledDate, scheduledTime);
+
+    const scheduledAt = this._createUtcDate(payload.scheduledDate, scheduledTime || '00:00');
     if (!scheduledAt) {
       throw ApiError.badRequest('Scheduled slot is invalid', 'VALIDATION_ERROR');
     }
@@ -724,7 +741,7 @@ class BookingsService {
         email: payload.requesterEmail ? payload.requesterEmail.trim().toLowerCase() : undefined,
       },
       scheduledDate: payload.scheduledDate,
-      scheduledTime: payload.scheduledTime,
+      scheduledTime,
       scheduledAt,
       notes: payload.notes || undefined,
       additionalFields,
@@ -795,6 +812,7 @@ class BookingsService {
     }
 
     const sortDirection = order === 'desc' ? -1 : 1;
+    const totalCount = await Booking.countDocuments(query);
     const bookings = await Booking.find(query)
       .sort({ scheduledAt: sortDirection, _id: sortDirection })
       .limit(limit)
@@ -812,6 +830,7 @@ class BookingsService {
         nextCursor:
           hasMore && lastItem?.scheduledAt ? new Date(lastItem.scheduledAt).toISOString() : null,
         count: bookings.length,
+        totalCount,
       },
     };
   }
