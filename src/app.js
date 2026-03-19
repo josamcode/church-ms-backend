@@ -22,6 +22,7 @@ const visitationsRoutes = require('./modules/visitations/visitations.routes');
 const meetingsRoutes = require('./modules/meetings/meetings.routes');
 const divineLiturgiesRoutes = require('./modules/divineLiturgies/divineLiturgies.routes');
 const notificationsRoutes = require('./modules/notifications/notifications.routes');
+const bookingsRoutes = require('./modules/bookings/bookings.routes');
 const householdClassificationRoutes = require('./modules/householdClassifications/householdClassification.routes');
 const aidRoutes = require('./modules/aids/aid.routes');
 
@@ -97,6 +98,7 @@ app.use('/api/visitations', visitationsRoutes);
 app.use('/api/meetings', meetingsRoutes);
 app.use('/api/divine-liturgies', divineLiturgiesRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/bookings', bookingsRoutes);
 app.use('/api/household-classifications', householdClassificationRoutes);
 app.use('/api/aids', aidRoutes);
 
