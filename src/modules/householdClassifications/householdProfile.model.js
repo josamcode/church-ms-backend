@@ -10,7 +10,6 @@ const householdProfileSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
-      unique: true,
     },
     houseName: {
       type: String,
@@ -23,7 +22,6 @@ const householdProfileSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
-      index: true,
     },
     manualPrimaryClassificationId: {
       type: mongoose.Schema.Types.ObjectId,
