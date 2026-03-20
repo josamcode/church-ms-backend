@@ -120,6 +120,14 @@ const uploadAvatar = asyncHandler(async (req, res) => {
   });
 });
 
+const uploadMyAvatar = asyncHandler(async (req, res) => {
+  const avatar = await userService.uploadAvatar(req.user.id, req.file, req.user.id);
+  return ApiResponse.success(res, {
+    message: 'تم رفع الصورة الشخصية بنجاح',
+    data: avatar,
+  });
+});
+
 const lockUser = asyncHandler(async (req, res) => {
   const user = await userService.lockUser(req.params.id, req.body.lockReason, req.user.id);
   return ApiResponse.success(res, {
@@ -166,8 +174,12 @@ module.exports = {
   deleteUser,
   uploadAvatarImage,
   uploadAvatar,
+  uploadMyAvatar,
   lockUser,
   unlockUser,
   manageTags,
   linkFamily,
 };
+
+
+

@@ -33,6 +33,15 @@ router.post(
   userController.uploadAvatarImage
 );
 
+router.post(
+  '/me/avatar',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.USERS_UPLOAD_AVATAR_SELF),
+  uploadLimiter,
+  upload.single('avatar'),
+  userController.uploadMyAvatar
+);
+
 router.get(
   '/custom-detail-keys',
   authenticateJWT,
@@ -150,3 +159,5 @@ router.post(
 );
 
 module.exports = router;
+
+
