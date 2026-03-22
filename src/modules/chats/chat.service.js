@@ -233,7 +233,54 @@ class ChatsService {
     );
   }
 
-  _mapThread(thread, viewerUserId, usersMap) {
+  async _loadUnreadCounts(threads = [], viewerUserId) {
+    const viewerId = this._normalizeId(viewerUserId);
+    if (!viewerId || !Array.isArray(threads) || threads.length === 0) {
+      return new Map();
+    }
+
+    const viewerObjectId = this._toObjectId(viewerId, 'viewerUserId');
+    const unreadMatches = threads
+      .map((thread) => {
+        const viewerParticipant = (thread.participants || []).find(
+          (participant) => this._normalizeId(participant.userId) === viewerId
+        );
+
+        if (!viewerParticipant) {
+          return null;
+        }
+
+        const match = {
+          threadId: this._toObjectId(thread._id, 'threadId'),
+          senderId: { $ne: viewerObjectId },
+        };
+
+        if (viewerParticipant.lastReadAt) {
+          const lastReadAt = new Date(viewerParticipant.lastReadAt);
+          if (!Number.isNaN(lastReadAt.getTime())) {
+            match.createdAt = { $gt: lastReadAt };
+          }
+        }
+
+        return match;
+      })
+      .filter(Boolean);
+
+    if (unreadMatches.length === 0) {
+      return new Map();
+    }
+
+    const unreadCounts = await ChatMessage.aggregate([
+      { $match: { $or: unreadMatches } },
+      { $group: { _id: '$threadId', unreadCount: { $sum: 1 } } },
+    ]);
+
+    return new Map(
+      unreadCounts.map((entry) => [this._normalizeId(entry._id), Number(entry.unreadCount || 0)])
+    );
+  }
+
+  _mapThread(thread, viewerUserId, usersMap, unreadCount = null) {
     const viewerId = this._normalizeId(viewerUserId);
     const participants = (thread.participants || []).map((participant) => {
       const user = usersMap.get(this._normalizeId(participant.userId));
@@ -269,11 +316,17 @@ class ChatsService {
 
     const lastMessageAt = thread.lastMessageAt || null;
     const lastReadAt = viewerParticipant?.lastReadAt || null;
-    const hasUnread =
+    const computedHasUnread =
       Boolean(viewerParticipant) &&
       Boolean(lastMessageAt) &&
       this._normalizeId(thread.lastMessageSenderId) !== viewerId &&
       (!lastReadAt || new Date(lastMessageAt).getTime() > new Date(lastReadAt).getTime());
+    const normalizedUnreadCount =
+      typeof unreadCount === 'number' && Number.isFinite(unreadCount)
+        ? Math.max(0, unreadCount)
+        : computedHasUnread
+          ? 1
+          : 0;
 
     return {
       id: this._normalizeId(thread._id),
@@ -297,7 +350,8 @@ class ChatsService {
         viewerUserId
       ),
       isParticipant: Boolean(viewerParticipant),
-      hasUnread,
+      hasUnread: normalizedUnreadCount > 0,
+      unreadCount: normalizedUnreadCount,
       viewerLastReadAt: lastReadAt,
       createdAt: thread.createdAt,
       updatedAt: thread.updatedAt,
@@ -365,9 +419,11 @@ class ChatsService {
     ];
 
     const usersMap = await this._loadUsersMap(userIds);
+    const unreadCounts = await this._loadUnreadCounts([thread], viewerUserId);
+    const threadId = this._normalizeId(thread._id);
 
     return {
-      thread: this._mapThread(thread, viewerUserId, usersMap),
+      thread: this._mapThread(thread, viewerUserId, usersMap, unreadCounts.get(threadId) || 0),
       messages: messages
         .reverse()
         .map((message) => this._mapMessage(message, usersMap, { thread, viewerUserId })),
@@ -490,8 +546,16 @@ class ChatsService {
       ...threads.flatMap((thread) => (thread.participants || []).map((participant) => participant.userId)),
     ]);
     const usersMap = await this._loadUsersMap(userIds);
+    const unreadCounts = await this._loadUnreadCounts(threads, viewerUserId);
 
-    let mapped = threads.map((thread) => this._mapThread(thread, viewerUserId, usersMap));
+    let mapped = threads.map((thread) =>
+      this._mapThread(
+        thread,
+        viewerUserId,
+        usersMap,
+        unreadCounts.get(this._normalizeId(thread._id)) || 0
+      )
+    );
 
     if (filters.q) {
       const q = String(filters.q).trim().toLowerCase();
