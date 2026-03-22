@@ -7,7 +7,9 @@
     "start": "node src/server.js",
     "dev": "npx nodemon src/server.js",
     "test": "jest --coverage --forceExit",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "backup:run": "node scripts/runBackup.js",
+    "google-drive:authorize": "node scripts/authorizeGoogleDrive.js"
   },
   "keywords": [
     "church",
@@ -24,6 +26,7 @@
     "express": "^4.21.2",
     "express-mongo-sanitize": "^2.2.0",
     "express-rate-limit": "^7.5.0",
+    "googleapis": "^171.4.0",
     "helmet": "^8.0.0",
     "hpp": "^0.2.3",
     "ioredis": "^5.4.2",
@@ -32,6 +35,8 @@
     "mongoose": "^8.9.5",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^8.0.3",
     "rate-limit-redis": "^4.2.0",
     "socket.io": "^4.8.3",
     "streamifier": "^0.1.1",

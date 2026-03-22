@@ -1,8 +1,11 @@
 const dotenv = require('dotenv');
+const fs = require('fs');
 const path = require('path');
+const cron = require('node-cron');
 
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
+const projectRoot = path.join(__dirname, '../../');
 const env = process.env.NODE_ENV || 'development';
 const isProduction = env === 'production';
 const isDevelopmentLike = env === 'development' || env === 'test';
@@ -44,6 +47,15 @@ const parseTrustProxy = (value, fallback) => {
   }
 
   return value;
+};
+
+const resolveAppPath = (value, fallback = '') => {
+  const normalized = String(value || fallback || '').trim();
+  if (!normalized) return '';
+
+  return path.isAbsolute(normalized)
+    ? normalized
+    : path.resolve(projectRoot, normalized);
 };
 
 const looksLikePlaceholderSecret = (value) => {
@@ -90,6 +102,48 @@ const cloudinaryEnabled = cloudinaryCredentialsCount === 3;
 if (cloudinaryCredentialsCount > 0 && cloudinaryCredentialsCount < 3) {
   throw new Error('Cloudinary configuration is incomplete. Provide all required credentials.');
 }
+
+const backupEnabled = parseBoolean(process.env.BACKUP_ENABLED, false);
+const backupSchedulerEnabled = parseBoolean(process.env.BACKUP_SCHEDULER_ENABLED, true);
+const backupIntervalDays = parseInteger(process.env.BACKUP_INTERVAL_DAYS, 3);
+const backupCron = String(process.env.BACKUP_CRON || '0 2 * * *').trim();
+const backupTimezone = String(process.env.BACKUP_TIMEZONE || 'UTC').trim() || 'UTC';
+const backupLocalRetentionDays = parseInteger(process.env.BACKUP_LOCAL_RETENTION_DAYS, 1);
+const backupLockTimeoutMinutes = parseInteger(process.env.BACKUP_LOCK_TIMEOUT_MINUTES, 240);
+const backupFilePrefix = String(process.env.BACKUP_FILE_PREFIX || 'church-mongodb-backup')
+  .trim()
+  .replace(/[^\w.-]+/g, '-')
+  .replace(/^-+|-+$/g, '');
+const backupTempDir = resolveAppPath(process.env.BACKUP_TEMP_DIR, path.join('tmp', 'backups'));
+const googleOAuthClientFilePath = resolveAppPath(
+  process.env.GOOGLE_OAUTH_CLIENT_FILE,
+  path.join('secure', 'google-oauth-client.json')
+);
+const googleOAuthTokenFilePath = resolveAppPath(
+  process.env.GOOGLE_OAUTH_TOKEN_FILE,
+  path.join('secure', 'google-oauth-token.json')
+);
+const smtpEnabled = parseBoolean(process.env.SMTP_ENABLED, false);
+const smtpHost = String(process.env.SMTP_HOST || '').trim();
+const smtpPort = parseInteger(process.env.SMTP_PORT, 587);
+const smtpSecure = parseBoolean(process.env.SMTP_SECURE, false);
+const smtpUser = String(process.env.SMTP_USER || '').trim();
+const smtpPass = String(process.env.SMTP_PASS || process.env.SMTP_PASSWORD || '');
+const smtpFrom = String(process.env.SMTP_FROM || '').trim();
+const backupNotificationRecipients = parseList(
+  process.env.BACKUP_NOTIFICATION_EMAILS || 'gergessamuel100@gmail.com'
+);
+const backupEmailNotificationsEnabled = parseBoolean(
+  process.env.BACKUP_EMAIL_NOTIFICATIONS_ENABLED,
+  false
+);
+const backupNotificationSubjectPrefix = String(
+  process.env.BACKUP_NOTIFICATION_SUBJECT_PREFIX || '[Church Backup]'
+).trim();
+const googleOAuthAllowMissingToken = parseBoolean(
+  process.env.GOOGLE_OAUTH_ALLOW_MISSING_TOKEN,
+  false
+);
 
 const config = {
   env,
@@ -149,6 +203,16 @@ const config = {
     tagline: process.env.SITE_TAGLINE || 'Church management system',
   },
 
+  mail: {
+    enabled: smtpEnabled,
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpSecure,
+    user: smtpUser,
+    pass: smtpPass,
+    from: smtpFrom,
+  },
+
   rateLimit: {
     windowMs: parseInteger(process.env.RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
     max: parseInteger(process.env.RATE_LIMIT_MAX, 100),
@@ -179,6 +243,32 @@ const config = {
       60 * 60 * 1000
     ),
   },
+
+  backup: {
+    enabled: backupEnabled,
+    schedulerEnabled: backupEnabled ? backupSchedulerEnabled : false,
+    intervalDays: backupIntervalDays,
+    intervalMs: backupIntervalDays * 24 * 60 * 60 * 1000,
+    cron: backupCron,
+    timezone: backupTimezone,
+    tempDir: backupTempDir,
+    localRetentionDays: backupLocalRetentionDays,
+    localRetentionMs:
+      backupLocalRetentionDays < 0 ? -1 : backupLocalRetentionDays * 24 * 60 * 60 * 1000,
+    lockTimeoutMs: backupLockTimeoutMinutes * 60 * 1000,
+    filePrefix: backupFilePrefix || 'church-mongodb-backup',
+    mongodumpPath: String(process.env.BACKUP_MONGODUMP_PATH || 'mongodump').trim() || 'mongodump',
+    googleDrive: {
+      folderId: String(process.env.GOOGLE_DRIVE_FOLDER_ID || '').trim(),
+      oauthClientFilePath: googleOAuthClientFilePath,
+      oauthTokenFilePath: googleOAuthTokenFilePath,
+    },
+    notifications: {
+      emailEnabled: backupEmailNotificationsEnabled,
+      recipients: backupNotificationRecipients,
+      subjectPrefix: backupNotificationSubjectPrefix || '[Church Backup]',
+    },
+  },
 };
 
 if (isProduction) {
@@ -203,6 +293,84 @@ if (config.redis.required && !(config.redis.url || config.redis.host)) {
 
 if (config.cloudinary.required && !config.cloudinary.enabled) {
   throw new Error('Cloudinary is required in this environment. Configure all Cloudinary secrets.');
+}
+
+if (config.mail.enabled) {
+  if (!config.mail.host) {
+    throw new Error('SMTP_HOST is required when SMTP_ENABLED=true.');
+  }
+
+  if (!config.mail.from) {
+    throw new Error('SMTP_FROM is required when SMTP_ENABLED=true.');
+  }
+
+  if (config.mail.port < 1) {
+    throw new Error('SMTP_PORT must be a valid port number when SMTP_ENABLED=true.');
+  }
+
+  if ((config.mail.user && !config.mail.pass) || (!config.mail.user && config.mail.pass)) {
+    throw new Error('SMTP_USER and SMTP_PASS must be provided together.');
+  }
+}
+
+if (config.backup.enabled) {
+  if (config.backup.intervalDays < 1) {
+    throw new Error('BACKUP_INTERVAL_DAYS must be at least 1.');
+  }
+
+  if (!cron.validate(config.backup.cron)) {
+    throw new Error('BACKUP_CRON is invalid. Provide a valid cron expression.');
+  }
+
+  if (config.backup.localRetentionDays < -1) {
+    throw new Error('BACKUP_LOCAL_RETENTION_DAYS must be -1 or greater.');
+  }
+
+  if (config.backup.lockTimeoutMs < 60 * 1000) {
+    throw new Error('BACKUP_LOCK_TIMEOUT_MINUTES must be at least 1.');
+  }
+
+  if (!config.backup.googleDrive.folderId) {
+    throw new Error('GOOGLE_DRIVE_FOLDER_ID is required when BACKUP_ENABLED=true.');
+  }
+
+  if (!config.backup.googleDrive.oauthClientFilePath) {
+    throw new Error(
+      'GOOGLE_OAUTH_CLIENT_FILE is required when BACKUP_ENABLED=true.'
+    );
+  }
+
+  if (!fs.existsSync(config.backup.googleDrive.oauthClientFilePath)) {
+    throw new Error(
+      `GOOGLE_OAUTH_CLIENT_FILE does not exist: ${config.backup.googleDrive.oauthClientFilePath}`
+    );
+  }
+
+  if (!config.backup.googleDrive.oauthTokenFilePath) {
+    throw new Error(
+      'GOOGLE_OAUTH_TOKEN_FILE is required when BACKUP_ENABLED=true. Run the OAuth authorization script first to generate the token file.'
+    );
+  }
+
+  if (!googleOAuthAllowMissingToken && !fs.existsSync(config.backup.googleDrive.oauthTokenFilePath)) {
+    throw new Error(
+      `GOOGLE_OAUTH_TOKEN_FILE does not exist: ${config.backup.googleDrive.oauthTokenFilePath}. Run the OAuth authorization script first.`
+    );
+  }
+
+  if (config.backup.notifications.emailEnabled) {
+    if (!config.mail.enabled) {
+      throw new Error(
+        'Backup email notifications require SMTP_ENABLED=true and valid SMTP configuration.'
+      );
+    }
+
+    if (config.backup.notifications.recipients.length === 0) {
+      throw new Error(
+        'BACKUP_NOTIFICATION_EMAILS must include at least one email address when BACKUP_EMAIL_NOTIFICATIONS_ENABLED=true.'
+      );
+    }
+  }
 }
 
 module.exports = config;
