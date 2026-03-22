@@ -1,17 +1,28 @@
 const mongoose = require('mongoose');
-const streamifier = require('streamifier');
 const ApiError = require('../../utils/ApiError');
-const logger = require('../../utils/logger');
-const config = require('../../config/env');
-const cloudinary = require('../../config/cloudinary');
 const { PERMISSIONS } = require('../../constants/permissions');
 const ArchiveContent = require('./archive.model');
+const {
+  uploadBufferToCloudinary,
+  validateImageUpload,
+} = require('../../utils/fileUploads');
 const {
   ARCHIVE_DOCUMENT_KEY,
   ARCHIVE_STATUSES,
 } = require('./archive.constants');
 
 class ArchiveService {
+  _canViewDraftContent(actorPermissions = []) {
+    return [
+      PERMISSIONS.ARCHIVE_COLLECTIONS_MANAGE,
+      PERMISSIONS.ARCHIVE_STORIES_MANAGE,
+      PERMISSIONS.ARCHIVE_HONOREES_MANAGE,
+      PERMISSIONS.ARCHIVE_PUBLISH,
+    ].some((permission) =>
+      Array.isArray(actorPermissions) && actorPermissions.includes(permission)
+    );
+  }
+
   _normalizeText(value, maxLength = 500) {
     if (typeof value !== 'string') return '';
     return value.trim().slice(0, maxLength);
@@ -360,49 +371,24 @@ class ArchiveService {
     return this._buildPayload(document, { publicOnly: true });
   }
 
-  async getManageContent() {
+  async getManageContent(actorPermissions = []) {
     const document = await this._ensureDocument();
-    return this._buildPayload(document);
+    return this._buildPayload(document, {
+      publicOnly: !this._canViewDraftContent(actorPermissions),
+    });
   }
 
   async uploadImage(file) {
-    if (!file) {
-      throw ApiError.badRequest('Please choose an image', 'UPLOAD_FAILED');
-    }
+    validateImageUpload(file, { emptyLabel: 'image' });
 
-    if (!config.upload.allowedImageTypes.includes(file.mimetype)) {
-      throw ApiError.badRequest(
-        'Unsupported image type. Allowed: JPEG, PNG, GIF, WEBP',
-        'UPLOAD_INVALID_TYPE'
-      );
-    }
-
-    if (file.size > config.upload.maxFileSize) {
-      throw ApiError.badRequest(
-        `File exceeds size limit (${Math.round(config.upload.maxFileSize / 1024 / 1024)} MB)`,
-        'UPLOAD_FILE_TOO_LARGE'
-      );
-    }
-
-    const uploadResult = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder: 'church/archive/images',
-          resource_type: 'image',
-        },
-        (error, result) => {
-          if (error) {
-            logger.error(`Archive image upload error: ${error.message}`);
-            reject(ApiError.internal('Failed to upload archive image'));
-            return;
-          }
-
-          resolve(result);
-        }
-      );
-
-      streamifier.createReadStream(file.buffer).pipe(uploadStream);
-    });
+    const uploadResult = await uploadBufferToCloudinary(
+      file,
+      {
+        folder: 'church/archive/images',
+        resource_type: 'image',
+      },
+      'Failed to upload archive image'
+    );
 
     return {
       url: uploadResult.secure_url,

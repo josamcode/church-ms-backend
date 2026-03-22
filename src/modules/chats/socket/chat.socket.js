@@ -10,14 +10,11 @@ const { ChatThread } = require('../chatThread.model');
 const { setChatIo, getUserRoom, emitTypingIndicator } = require('../chat.realtime');
 
 const parseAllowedOrigins = () => {
-  if (!config.cors.origin || config.cors.origin === '*') {
-    return '*';
+  if (!Array.isArray(config.cors.allowedOrigins) || config.cors.allowedOrigins.length === 0) {
+    return [];
   }
 
-  return config.cors.origin
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean);
+  return config.cors.allowedOrigins;
 };
 
 const extractSocketToken = (socket) => {
@@ -63,9 +60,13 @@ const initializeChatSocketServer = (httpServer) => {
       }
 
       if (decoded.jti) {
-        const isBlacklisted = await redisClient.get(CACHE_KEYS.TOKEN_BLACKLIST(decoded.jti));
-        if (isBlacklisted) {
-          return next(new Error('AUTH_TOKEN_BLACKLISTED'));
+        try {
+          const isBlacklisted = await redisClient.get(CACHE_KEYS.TOKEN_BLACKLIST(decoded.jti));
+          if (isBlacklisted) {
+            return next(new Error('AUTH_TOKEN_BLACKLISTED'));
+          }
+        } catch (_error) {
+          return next(new Error('AUTH_SERVICE_UNAVAILABLE'));
         }
       }
 

@@ -193,6 +193,13 @@ const createPublicBooking = {
   }),
 };
 
+const publicImageUpload = {
+  body: Joi.object({
+    bookingTypeId: Joi.string().pattern(OBJECT_ID_PATTERN).required(),
+    fieldKey: Joi.string().trim().pattern(FIELD_KEY_PATTERN).required(),
+  }),
+};
+
 const listBookings = {
   query: Joi.object({
     cursor: Joi.string().optional(),
@@ -222,6 +229,7 @@ module.exports = {
   updateBookingType,
   listPublicSlots,
   createPublicBooking,
+  publicImageUpload,
   listBookings,
   updateBooking,
 };

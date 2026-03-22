@@ -1,16 +1,25 @@
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
-const cloudinary = require('../../config/cloudinary');
-const streamifier = require('streamifier');
-const config = require('../../config/env');
-const logger = require('../../utils/logger');
 const { buildPaginationMeta } = require('../../utils/pagination');
 const Notification = require('./notification.model');
 const NotificationType = require('./notificationType.model');
+const { PERMISSIONS } = require('../../constants/permissions');
+const {
+  uploadBufferToCloudinary,
+  validateImageUpload,
+} = require('../../utils/fileUploads');
 
 const { seedDefaultNotificationTypes } = NotificationType;
 
 class NotificationsService {
+  _defaultAudiencePermissions() {
+    return [
+      PERMISSIONS.NOTIFICATIONS_CREATE,
+      PERMISSIONS.NOTIFICATIONS_UPDATE,
+      PERMISSIONS.NOTIFICATIONS_TYPES_MANAGE,
+    ];
+  }
+
   _buildAudienceQuery(userPermissions = []) {
     return {
       $or: [
@@ -21,6 +30,28 @@ class NotificationsService {
           audiencePermissions: { $in: Array.isArray(userPermissions) ? userPermissions : [] },
         },
       ],
+    };
+  }
+
+  _normalizeAudience(payload = {}) {
+    const requestedAudienceType = String(payload?.audienceType || '').trim().toLowerCase();
+    if (requestedAudienceType === 'all') {
+      return {
+        audienceType: 'all',
+        audiencePermissions: [],
+      };
+    }
+
+    const audiencePermissions = [...new Set(
+      (Array.isArray(payload?.audiencePermissions) ? payload.audiencePermissions : [])
+        .map((permission) => String(permission || '').trim())
+        .filter(Boolean)
+    )];
+
+    return {
+      audienceType: 'permissions',
+      audiencePermissions:
+        audiencePermissions.length > 0 ? audiencePermissions : this._defaultAudiencePermissions(),
     };
   }
 
@@ -156,44 +187,17 @@ class NotificationsService {
   }
 
   async uploadImageToCloudinary(file) {
-    if (!file) {
-      throw ApiError.badRequest('Image file is required', 'UPLOAD_FAILED');
-    }
+    validateImageUpload(file, { emptyLabel: 'image' });
 
-    if (!config.upload.allowedImageTypes.includes(file.mimetype)) {
-      throw ApiError.badRequest(
-        'File type is not allowed. Allowed types: JPEG, PNG, GIF, WEBP',
-        'UPLOAD_INVALID_TYPE'
-      );
-    }
-
-    if (file.size > config.upload.maxFileSize) {
-      throw ApiError.badRequest(
-        `File exceeds size limit (${Math.round(config.upload.maxFileSize / 1024 / 1024)} MB)`,
-        'UPLOAD_FILE_TOO_LARGE'
-      );
-    }
-
-    const uploadResult = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder: 'church/notifications',
-          resource_type: 'image',
-          transformation: [{ quality: 'auto', fetch_format: 'auto' }],
-        },
-        (error, result) => {
-          if (error) {
-            logger.error(`Cloudinary notification image upload error: ${error.message}`);
-            reject(ApiError.internal('Failed to upload notification image'));
-            return;
-          }
-
-          resolve(result);
-        }
-      );
-
-      streamifier.createReadStream(file.buffer).pipe(uploadStream);
-    });
+    const uploadResult = await uploadBufferToCloudinary(
+      file,
+      {
+        folder: 'church/notifications',
+        resource_type: 'image',
+        transformation: [{ quality: 'auto', fetch_format: 'auto' }],
+      },
+      'Failed to upload notification image'
+    );
 
     return {
       url: uploadResult.secure_url,
@@ -269,6 +273,7 @@ class NotificationsService {
 
   async createNotification(payload, actorUserId) {
     const type = await this._resolveType(payload.typeId);
+    const audience = this._normalizeAudience(payload);
 
     const created = await Notification.create({
       typeId: type._id,
@@ -279,11 +284,19 @@ class NotificationsService {
       eventDate: payload.eventDate ? new Date(payload.eventDate) : undefined,
       coverImageUrl: payload.coverImageUrl || undefined,
       isActive: payload.isActive !== undefined ? payload.isActive : true,
+      audienceType: audience.audienceType,
+      audiencePermissions: audience.audiencePermissions,
       createdBy: actorUserId,
       updatedBy: actorUserId,
     });
 
-    return this.getNotificationById(created._id);
+    return this._mapNotification(
+      await Notification.findById(created._id)
+        .populate('typeId', 'name')
+        .populate('createdBy', 'fullName')
+        .populate('updatedBy', 'fullName')
+        .lean()
+    );
   }
 
   async getNotificationById(id, userPermissions = []) {
@@ -309,6 +322,14 @@ class NotificationsService {
     if (!notification) {
       throw ApiError.notFound('Notification not found', 'RESOURCE_NOT_FOUND');
     }
+    const audience = this._normalizeAudience({
+      audienceType:
+        payload.audienceType !== undefined ? payload.audienceType : notification.audienceType,
+      audiencePermissions:
+        payload.audiencePermissions !== undefined
+          ? payload.audiencePermissions
+          : notification.audiencePermissions,
+    });
 
     if (payload.typeId && String(payload.typeId) !== String(notification.typeId)) {
       const type = await this._resolveType(payload.typeId);
@@ -340,10 +361,19 @@ class NotificationsService {
       notification.isActive = payload.isActive;
     }
 
+    notification.audienceType = audience.audienceType;
+    notification.audiencePermissions = audience.audiencePermissions;
+
     notification.updatedBy = actorUserId;
     await notification.save();
 
-    return this.getNotificationById(notification._id);
+    return this._mapNotification(
+      await Notification.findById(notification._id)
+        .populate('typeId', 'name')
+        .populate('createdBy', 'fullName')
+        .populate('updatedBy', 'fullName')
+        .lean()
+    );
   }
 }
 

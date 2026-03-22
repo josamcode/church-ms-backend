@@ -174,7 +174,12 @@ const updateMeetingDocumentationSettings = asyncHandler(async (req, res) => {
 });
 
 const uploadMeetingDocumentationAsset = asyncHandler(async (req, res) => {
-  const asset = await meetingsService.uploadDocumentationAssetToCloudinary(req.file);
+  const asset = await meetingsService.uploadDocumentationAssetToCloudinary(req.file, {
+    meetingId: req.body.meetingId,
+    documentationDate: req.body.documentationDate,
+    actorUserId: req.user.id,
+    userPermissions: req.userPermissions || [],
+  });
   return ApiResponse.success(res, {
     message: 'Meeting documentation asset uploaded successfully',
     data: asset,

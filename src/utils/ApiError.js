@@ -12,15 +12,18 @@ class ApiError extends Error {
     return new ApiError(400, message, errorCode, details);
   }
 
-  static unauthorized(message = 'يجب تسجيل الدخول أولاً', errorCode = 'AUTH_UNAUTHORIZED') {
+  static unauthorized(
+    message = 'Authentication is required',
+    errorCode = 'AUTH_UNAUTHORIZED'
+  ) {
     return new ApiError(401, message, errorCode);
   }
 
-  static forbidden(message = 'ليس لديك صلاحية لتنفيذ هذا الإجراء', errorCode = 'PERMISSION_DENIED') {
+  static forbidden(message = 'Permission denied', errorCode = 'PERMISSION_DENIED') {
     return new ApiError(403, message, errorCode);
   }
 
-  static notFound(message = 'المورد المطلوب غير موجود', errorCode = 'RESOURCE_NOT_FOUND') {
+  static notFound(message = 'Resource not found', errorCode = 'RESOURCE_NOT_FOUND') {
     return new ApiError(404, message, errorCode);
   }
 
@@ -28,11 +31,18 @@ class ApiError extends Error {
     return new ApiError(409, message, errorCode);
   }
 
-  static tooManyRequests(message = 'تم تجاوز الحد المسموح به من الطلبات') {
+  static tooManyRequests(message = 'Too many requests') {
     return new ApiError(429, message, 'RATE_LIMITED');
   }
 
-  static internal(message = 'خطأ داخلي في الخادم') {
+  static serviceUnavailable(
+    message = 'The requested service is temporarily unavailable',
+    errorCode = 'SERVICE_UNAVAILABLE'
+  ) {
+    return new ApiError(503, message, errorCode);
+  }
+
+  static internal(message = 'Internal server error') {
     return new ApiError(500, message, 'INTERNAL_ERROR');
   }
 }

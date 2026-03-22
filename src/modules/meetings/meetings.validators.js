@@ -324,6 +324,20 @@ const updateMeetingDocumentationSettings = {
   }),
 };
 
+const uploadMeetingDocumentationAsset = {
+  body: Joi.object({
+    meetingId: objectIdField.required(),
+    documentationDate: Joi.string()
+      .trim()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .required()
+      .messages({
+        'string.pattern.base': 'Documentation date must be YYYY-MM-DD',
+        'any.required': 'Documentation date is required',
+      }),
+  }),
+};
+
 module.exports = {
   idParam,
   memberParams,
@@ -344,4 +358,5 @@ module.exports = {
   meetingDocumentationQuery,
   updateMeetingDocumentation,
   updateMeetingDocumentationSettings,
+  uploadMeetingDocumentationAsset,
 };

@@ -124,6 +124,7 @@ router.post(
   ),
   uploadLimiter,
   documentationUpload.single('file'),
+  validate(meetingsValidators.uploadMeetingDocumentationAsset),
   meetingsController.uploadMeetingDocumentationAsset
 );
 

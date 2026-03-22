@@ -2,12 +2,12 @@ const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
 const mongoSanitize = require('express-mongo-sanitize');
-const xss = require('xss-clean');
 const hpp = require('hpp');
 const morgan = require('morgan');
 const config = require('./config/env');
 const { generalLimiter } = require('./middlewares/rateLimit');
 const requestId = require('./middlewares/requestId');
+const sanitizeRequest = require('./middlewares/sanitizeRequest');
 const notFound = require('./middlewares/notFound');
 const errorHandler = require('./middlewares/errorHandler');
 const logger = require('./utils/logger');
@@ -31,23 +31,36 @@ const { swaggerUi, specs } = require('./docs/swagger');
 
 const app = express();
 
+app.set('trust proxy', config.http.trustProxy);
 app.use(helmet());
 
 app.use(
   cors({
-    origin: config.cors.origin === '*' ? '*' : config.cors.origin.split(','),
-    credentials: true,
+    credentials: config.cors.credentials,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+    origin(origin, callback) {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (config.cors.allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error('CORS origin not allowed'));
+    },
   })
 );
 
-app.use(mongoSanitize());
-app.use(xss());
-app.use(hpp());
-app.use(requestId);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(mongoSanitize());
+app.use(hpp());
+app.use(sanitizeRequest);
+app.use(requestId);
 app.use('/api', generalLimiter);
 
 if (config.env !== 'test') {
@@ -63,15 +76,17 @@ if (config.env !== 'test') {
   );
 }
 
-app.use(
-  '/api/docs',
-  swaggerUi.serve,
-  swaggerUi.setup(specs, {
-    explorer: true,
-    customCss: '.swagger-ui .topbar { display: none }',
-    customSiteTitle: 'Church Management API Docs',
-  })
-);
+if (config.docs.enabled) {
+  app.use(
+    '/api/docs',
+    swaggerUi.serve,
+    swaggerUi.setup(specs, {
+      explorer: true,
+      customCss: '.swagger-ui .topbar { display: none }',
+      customSiteTitle: 'Church Management API Docs',
+    })
+  );
+}
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -96,6 +111,7 @@ app.get('/api/health', (req, res) => {
       uptime: process.uptime(),
       environment: config.env,
       timestamp: new Date().toISOString(),
+      redisFallback: require('./config/redis').isFallback,
     },
     requestId: res.requestId,
     timestamp: new Date().toISOString(),

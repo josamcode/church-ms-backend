@@ -1,11 +1,13 @@
 const mongoose = require('mongoose');
-const cloudinary = require('../../config/cloudinary');
-const streamifier = require('streamifier');
 const config = require('../../config/env');
 const logger = require('../../utils/logger');
 const ApiError = require('../../utils/ApiError');
 const BookingType = require('./bookingType.model');
 const Booking = require('./booking.model');
+const {
+  uploadBufferToCloudinary,
+  validateImageUpload,
+} = require('../../utils/fileUploads');
 
 const { AVAILABILITY_MODES, FIELD_TYPES } = BookingType;
 const { BOOKING_STATUSES } = Booking;
@@ -393,7 +395,7 @@ class BookingsService {
     const toScheduledAt = this._createUtcDate(toDate, '23:59');
     const bookings = await Booking.find({
       bookingTypeId: this._toObjectId(bookingTypeId, 'bookingTypeId'),
-      status: { $ne: BOOKING_STATUSES.CANCELLED },
+      status: { $in: [BOOKING_STATUSES.CONFIRMED, BOOKING_STATUSES.COMPLETED] },
       scheduledAt: {
         $gte: fromScheduledAt,
         $lte: toScheduledAt,
@@ -408,6 +410,35 @@ class BookingsService {
       counts.set(key, (counts.get(key) || 0) + 1);
     });
     return counts;
+  }
+
+  async _assertNoRecentDuplicatePublicBooking(type, payload, scheduledTime) {
+    const duplicateWindowStartedAt = new Date(Date.now() - 30 * 60 * 1000);
+    const requesterPhone = String(payload.requesterPhone || '').trim();
+    const requesterEmail = payload.requesterEmail
+      ? String(payload.requesterEmail).trim().toLowerCase()
+      : null;
+
+    const query = {
+      bookingTypeId: this._toObjectId(type._id, 'bookingTypeId'),
+      scheduledDate: payload.scheduledDate,
+      scheduledTime: scheduledTime || null,
+      status: { $in: [BOOKING_STATUSES.PENDING, BOOKING_STATUSES.CONFIRMED] },
+      createdAt: { $gte: duplicateWindowStartedAt },
+      'requester.phone': requesterPhone,
+    };
+
+    if (requesterEmail) {
+      query.$or = [{ 'requester.email': requesterEmail }, { 'requester.email': { $exists: false } }];
+    }
+
+    const duplicate = await Booking.findOne(query).select('_id').lean();
+    if (duplicate) {
+      throw ApiError.conflict(
+        'A booking request for this slot was already submitted recently',
+        'DUPLICATE_VALUE'
+      );
+    }
   }
 
   async _buildSlotsForType(type, { fromDate, toDate }) {
@@ -624,6 +655,21 @@ class BookingsService {
     }));
   }
 
+  _resolvePublicImageField(type, fieldKey) {
+    const field = (Array.isArray(type.dynamicFields) ? type.dynamicFields : []).find(
+      (entry) => entry?.key === fieldKey
+    );
+
+    if (!field || field.type !== FIELD_TYPES.IMAGE) {
+      throw ApiError.badRequest(
+        'Image uploads are only allowed for configured image fields',
+        'VALIDATION_ERROR'
+      );
+    }
+
+    return field;
+  }
+
   async _assertCapacityAvailable(type, scheduledDate, scheduledTime) {
     const bookedCounts = await this._getBookedSlotCounts(type._id, scheduledDate, scheduledDate);
     const booked = bookedCounts.get(`${scheduledDate}|${scheduledTime || ''}`) || 0;
@@ -723,6 +769,7 @@ class BookingsService {
       : null;
 
     this._assertRequestedScheduleAllowed(type, payload.scheduledDate, scheduledTime);
+    await this._assertNoRecentDuplicatePublicBooking(type, payload, scheduledTime);
     await this._assertCapacityAvailable(type, payload.scheduledDate, scheduledTime);
 
     const scheduledAt = this._createUtcDate(payload.scheduledDate, scheduledTime || '00:00');
@@ -858,6 +905,18 @@ class BookingsService {
       throw ApiError.notFound('Booking not found', 'RESOURCE_NOT_FOUND');
     }
 
+    const nextStatus =
+      payload.status !== undefined ? payload.status : booking.status;
+    const isTransitioningToConfirmed =
+      nextStatus === BOOKING_STATUSES.CONFIRMED &&
+      booking.status !== BOOKING_STATUSES.CONFIRMED &&
+      booking.status !== BOOKING_STATUSES.COMPLETED;
+
+    if (isTransitioningToConfirmed) {
+      const type = await this._resolveBookableType(booking.bookingTypeId);
+      await this._assertCapacityAvailable(type, booking.scheduledDate, booking.scheduledTime);
+    }
+
     if (payload.status !== undefined) {
       booking.status = payload.status;
     }
@@ -872,45 +931,21 @@ class BookingsService {
     return this.getBookingById(booking._id);
   }
 
-  async uploadImageToCloudinary(file) {
-    if (!file) {
-      throw ApiError.badRequest('Image file is required', 'UPLOAD_FAILED');
-    }
+  async uploadImageToCloudinary(file, { bookingTypeId, fieldKey } = {}) {
+    validateImageUpload(file, { emptyLabel: 'image' });
 
-    if (!config.upload.allowedImageTypes.includes(file.mimetype)) {
-      throw ApiError.badRequest(
-        'File type is not allowed. Allowed types: JPEG, PNG, GIF, WEBP',
-        'UPLOAD_INVALID_TYPE'
-      );
-    }
+    const type = await this._resolveBookableType(bookingTypeId);
+    this._resolvePublicImageField(type, fieldKey);
 
-    if (file.size > config.upload.maxFileSize) {
-      throw ApiError.badRequest(
-        `File exceeds size limit (${Math.round(config.upload.maxFileSize / 1024 / 1024)} MB)`,
-        'UPLOAD_FILE_TOO_LARGE'
-      );
-    }
-
-    const uploadResult = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder: 'church/bookings',
-          resource_type: 'image',
-          transformation: [{ quality: 'auto', fetch_format: 'auto' }],
-        },
-        (error, result) => {
-          if (error) {
-            logger.error(`Cloudinary booking image upload error: ${error.message}`);
-            reject(ApiError.internal('Failed to upload booking image'));
-            return;
-          }
-
-          resolve(result);
-        }
-      );
-
-      streamifier.createReadStream(file.buffer).pipe(uploadStream);
-    });
+    const uploadResult = await uploadBufferToCloudinary(
+      file,
+      {
+        folder: `church/bookings/${String(type._id)}/${fieldKey}`,
+        resource_type: 'image',
+        transformation: [{ quality: 'auto', fetch_format: 'auto' }],
+      },
+      'Failed to upload booking image'
+    );
 
     return {
       url: uploadResult.secure_url,

@@ -6,7 +6,7 @@ const bookingsValidators = require('./bookings.validators');
 const validate = require('../../middlewares/validate');
 const { authenticateJWT, optionalAuth } = require('../../middlewares/auth');
 const { authorizeAnyPermissions, authorizePermissions } = require('../../middlewares/permissions');
-const { uploadLimiter } = require('../../middlewares/rateLimit');
+const { publicBookingLimiter, uploadLimiter } = require('../../middlewares/rateLimit');
 const { PERMISSIONS } = require('../../constants/permissions');
 
 const router = express.Router();
@@ -28,11 +28,13 @@ router.post(
   '/public/upload-image',
   uploadLimiter,
   upload.single('image'),
+  validate(bookingsValidators.publicImageUpload),
   bookingsController.uploadPublicImage
 );
 
 router.post(
   '/public',
+  publicBookingLimiter,
   optionalAuth,
   validate(bookingsValidators.createPublicBooking),
   bookingsController.createPublicBooking

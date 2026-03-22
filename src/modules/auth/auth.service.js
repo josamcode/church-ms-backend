@@ -10,9 +10,6 @@ const { ROLES } = require('../../constants/roles');
 const logger = require('../../utils/logger');
 
 class AuthService {
-  /**
-   * توليد رمز الوصول (Access Token)
-   */
   generateAccessToken(user) {
     const jti = uuidv4();
     const token = jwt.sign(
@@ -28,23 +25,71 @@ class AuthService {
     return { token, jti };
   }
 
-  /**
-   * توليد رمز التحديث (Refresh Token)
-   */
   generateRefreshToken() {
     return crypto.randomBytes(40).toString('hex');
   }
 
-  /**
-   * تشفير رمز التحديث للتخزين
-   */
   hashToken(token) {
     return crypto.createHash('sha256').update(token).digest('hex');
   }
 
-  /**
-   * تخزين رمز التحديث في Redis
-   */
+  _buildClientUserDto(userLike) {
+    const user =
+      userLike && typeof userLike.toObject === 'function' ? userLike.toObject() : { ...userLike };
+    const id = user?._id ? String(user._id) : user?.id ? String(user.id) : null;
+
+    return {
+      id,
+      _id: id,
+      fullName: user?.fullName || '',
+      email: user?.email || '',
+      phonePrimary: user?.phonePrimary || '',
+      phoneSecondary: user?.phoneSecondary || '',
+      birthDate: user?.birthDate || null,
+      gender: user?.gender || '',
+      role: user?.role || '',
+      avatar: user?.avatar?.url ? { url: user.avatar.url } : null,
+      ageGroup: user?.ageGroup || '',
+      tags: Array.isArray(user?.tags) ? user.tags : [],
+      address: {
+        governorate: user?.address?.governorate || '',
+        city: user?.address?.city || '',
+        street: user?.address?.street || '',
+      },
+      familyName: user?.familyName || '',
+      houseName: user?.houseName || '',
+      isLocked: Boolean(user?.isLocked),
+      allowOthersToViewCreatedConfessionSessions:
+        user?.allowOthersToViewCreatedConfessionSessions !== false,
+      allowOthersToViewCreatedChats: user?.allowOthersToViewCreatedChats !== false,
+      meetingIds: Array.isArray(user?.meetingIds)
+        ? user.meetingIds.map((meetingId) => String(meetingId))
+        : [],
+      extraPermissions: Array.isArray(user?.extraPermissions) ? user.extraPermissions : [],
+      deniedPermissions: Array.isArray(user?.deniedPermissions) ? user.deniedPermissions : [],
+      createdAt: user?.createdAt || null,
+      updatedAt: user?.updatedAt || null,
+    };
+  }
+
+  async _clearUserCaches(userId) {
+    try {
+      await redisClient.del(CACHE_KEYS.USER_PROFILE(userId));
+      await redisClient.del(CACHE_KEYS.USER_PERMISSIONS(userId));
+    } catch (_error) {
+      // Cache invalidation failure should not interrupt the main request path.
+    }
+  }
+
+  async _invalidateAllSessions(userId) {
+    const user = await User.findById(userId);
+    if (!user) return;
+
+    user.authVersion = Number(user.authVersion || 0) + 1;
+    await user.save();
+    await this._clearUserCaches(userId);
+  }
+
   async storeRefreshToken(userId, refreshToken, authVersion = 0) {
     const hash = this.hashToken(refreshToken);
     try {
@@ -57,14 +102,15 @@ class AuthService {
           createdAt: new Date().toISOString(),
         })
       );
-    } catch (err) {
-      logger.error(`فشل تخزين رمز التحديث: ${err.message}`);
+    } catch (error) {
+      logger.error(`Failed to persist refresh token: ${error.message}`);
+      throw ApiError.serviceUnavailable(
+        'Session storage is temporarily unavailable. Please try again.',
+        'AUTH_SESSION_STORE_UNAVAILABLE'
+      );
     }
   }
 
-  /**
-   * تسجيل مستخدم جديد
-   */
   async register({ fullName, phonePrimary, email, password, birthDate, gender }) {
     const orConditions = [{ phonePrimary }];
     if (email) orConditions.push({ email });
@@ -73,10 +119,10 @@ class AuthService {
 
     if (existingUser) {
       if (existingUser.phonePrimary === phonePrimary) {
-        throw ApiError.conflict('رقم الهاتف مسجل مسبقاً', 'DUPLICATE_PHONE');
+        throw ApiError.conflict('Phone number is already registered', 'DUPLICATE_PHONE');
       }
       if (email && existingUser.email === email) {
-        throw ApiError.conflict('البريد الإلكتروني مسجل مسبقاً', 'DUPLICATE_EMAIL');
+        throw ApiError.conflict('Email address is already registered', 'DUPLICATE_EMAIL');
       }
     }
 
@@ -86,7 +132,7 @@ class AuthService {
       email: email || undefined,
       birthDate,
       gender,
-      hasLogin: true,
+      hasLogin: false,
       loginIdentifierType: email ? 'email' : 'phone',
       passwordHash: password,
       role: ROLES.USER,
@@ -94,46 +140,40 @@ class AuthService {
 
     await user.save();
 
-    const { token: accessToken } = this.generateAccessToken(user);
-    const refreshToken = this.generateRefreshToken();
-    await this.storeRefreshToken(user._id, refreshToken, user.authVersion);
-
     return {
-      user: user.toSafeObject(),
-      accessToken,
-      refreshToken,
+      user: this._buildClientUserDto(user),
+      accessToken: null,
+      refreshToken: null,
+      requiresApproval: true,
     };
   }
 
-  /**
-   * تسجيل الدخول
-   */
   async login({ identifier, password }) {
     const user = await User.findOne({
       $or: [{ phonePrimary: identifier }, { email: identifier }],
     }).select('+passwordHash');
 
     if (!user) {
-      throw ApiError.unauthorized('بيانات الدخول غير صحيحة', 'AUTH_INVALID_CREDENTIALS');
+      throw ApiError.unauthorized('Invalid credentials', 'AUTH_INVALID_CREDENTIALS');
     }
 
     if (!user.hasLogin) {
       throw ApiError.forbidden(
-        'هذا الحساب لا يملك صلاحية تسجيل الدخول',
+        'This account is pending approval and cannot sign in yet',
         'AUTH_NO_LOGIN_ACCESS'
       );
     }
 
     if (user.isLocked) {
       throw ApiError.forbidden(
-        `الحساب مغلق: ${user.lockReason || 'يرجى التواصل مع المسؤول'}`,
+        `This account is locked: ${user.lockReason || 'Please contact an administrator'}`,
         'AUTH_ACCOUNT_LOCKED'
       );
     }
 
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
-      throw ApiError.unauthorized('بيانات الدخول غير صحيحة', 'AUTH_INVALID_CREDENTIALS');
+      throw ApiError.unauthorized('Invalid credentials', 'AUTH_INVALID_CREDENTIALS');
     }
 
     user.lastLoginAt = new Date();
@@ -144,18 +184,15 @@ class AuthService {
     await this.storeRefreshToken(user._id, refreshToken, user.authVersion);
 
     return {
-      user: user.toSafeObject(),
+      user: this._buildClientUserDto(user),
       accessToken,
       refreshToken,
     };
   }
 
-  /**
-   * تحديث الجلسة (Refresh)
-   */
   async refresh(refreshTokenValue) {
     if (!refreshTokenValue) {
-      throw ApiError.unauthorized('رمز التحديث مطلوب', 'AUTH_REFRESH_TOKEN_INVALID');
+      throw ApiError.unauthorized('Refresh token is required', 'AUTH_REFRESH_TOKEN_INVALID');
     }
 
     const hash = this.hashToken(refreshTokenValue);
@@ -163,40 +200,49 @@ class AuthService {
 
     try {
       stored = await redisClient.get(CACHE_KEYS.REFRESH_TOKEN(hash));
-    } catch (err) {
-      throw ApiError.internal('خطأ في التحقق من رمز التحديث');
+    } catch (_error) {
+      throw ApiError.serviceUnavailable(
+        'Unable to verify the refresh token right now. Please try again.',
+        'AUTH_SESSION_STORE_UNAVAILABLE'
+      );
     }
 
     if (!stored) {
       throw ApiError.unauthorized(
-        'رمز التحديث غير صالح أو منتهي الصلاحية',
+        'Refresh token is invalid or expired',
         'AUTH_REFRESH_TOKEN_INVALID'
       );
     }
 
     const { userId, authVersion: storedAuthVersion = 0 } = JSON.parse(stored);
 
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).select('role authVersion isLocked isDeleted');
     if (!user || user.isDeleted) {
       await redisClient.del(CACHE_KEYS.REFRESH_TOKEN(hash));
-      throw ApiError.unauthorized('المستخدم غير موجود', 'AUTH_REFRESH_TOKEN_INVALID');
+      throw ApiError.unauthorized('User account was not found', 'AUTH_REFRESH_TOKEN_INVALID');
     }
 
     if (user.isLocked) {
       await redisClient.del(CACHE_KEYS.REFRESH_TOKEN(hash));
-      throw ApiError.forbidden('الحساب مغلق', 'AUTH_ACCOUNT_LOCKED');
+      throw ApiError.forbidden('This account is locked', 'AUTH_ACCOUNT_LOCKED');
     }
 
     if (Number(user.authVersion || 0) !== Number(storedAuthVersion || 0)) {
       await redisClient.del(CACHE_KEYS.REFRESH_TOKEN(hash));
       throw ApiError.unauthorized(
-        'تم تحديث صلاحيات هذا الحساب. يرجى تسجيل الدخول مرة أخرى',
+        'This session has been invalidated. Please sign in again.',
         'AUTH_SESSION_INVALIDATED'
       );
     }
 
-    // Rotate: delete old, create new
-    await redisClient.del(CACHE_KEYS.REFRESH_TOKEN(hash));
+    try {
+      await redisClient.del(CACHE_KEYS.REFRESH_TOKEN(hash));
+    } catch (_error) {
+      throw ApiError.serviceUnavailable(
+        'Unable to rotate the current session. Please try again.',
+        'AUTH_SESSION_STORE_UNAVAILABLE'
+      );
+    }
 
     const { token: accessToken } = this.generateAccessToken(user);
     const newRefreshToken = this.generateRefreshToken();
@@ -208,11 +254,9 @@ class AuthService {
     };
   }
 
-  /**
-   * تسجيل الخروج
-   */
   async logout(userId, jti, refreshTokenValue) {
-    // Blacklist the access token for its remaining TTL
+    let shouldInvalidateAllSessions = false;
+
     if (jti) {
       try {
         await redisClient.setex(
@@ -220,66 +264,87 @@ class AuthService {
           CACHE_TTL.TOKEN_BLACKLIST,
           '1'
         );
-      } catch (err) {
-        logger.warn(`فشل إضافة الرمز للقائمة السوداء: ${err.message}`);
+      } catch (error) {
+        logger.error(`Failed to blacklist access token during logout: ${error.message}`);
+        shouldInvalidateAllSessions = true;
       }
     }
 
-    // Remove refresh token
     if (refreshTokenValue) {
       const hash = this.hashToken(refreshTokenValue);
       try {
         await redisClient.del(CACHE_KEYS.REFRESH_TOKEN(hash));
-      } catch (err) {
-        logger.warn(`فشل حذف رمز التحديث: ${err.message}`);
+      } catch (error) {
+        logger.error(`Failed to delete refresh token during logout: ${error.message}`);
+        shouldInvalidateAllSessions = true;
       }
     }
 
-    // Clear user caches
-    try {
-      await redisClient.del(CACHE_KEYS.USER_PROFILE(userId));
-      await redisClient.del(CACHE_KEYS.USER_PERMISSIONS(userId));
-    } catch (err) {
-      logger.warn(`فشل مسح ذاكرة التخزين المؤقت: ${err.message}`);
+    if (shouldInvalidateAllSessions) {
+      await this._invalidateAllSessions(userId);
+      return;
     }
+
+    await this._clearUserCaches(userId);
   }
 
-  /**
-   * جلب بيانات المستخدم الحالي
-   */
   async getMe(userId) {
     try {
       const cached = await redisClient.get(CACHE_KEYS.USER_PROFILE(userId));
       if (cached) return JSON.parse(cached);
-    } catch (err) {
-      // Cache miss
+    } catch (_error) {
+      // Cache miss is not fatal.
     }
 
     const user = await User.findById(userId)
-      .select('-changeLog -__v')
+      .select([
+        'fullName',
+        'email',
+        'phonePrimary',
+        'phoneSecondary',
+        'birthDate',
+        'gender',
+        'role',
+        'avatar',
+        'ageGroup',
+        'tags',
+        'address',
+        'familyName',
+        'houseName',
+        'isLocked',
+        'allowOthersToViewCreatedConfessionSessions',
+        'allowOthersToViewCreatedChats',
+        'meetingIds',
+        'extraPermissions',
+        'deniedPermissions',
+        'createdAt',
+        'updatedAt',
+      ].join(' '))
       .lean();
 
     if (!user) {
-      throw ApiError.notFound('المستخدم غير موجود', 'USER_NOT_FOUND');
+      throw ApiError.notFound('User account was not found', 'USER_NOT_FOUND');
     }
+
+    const safeUser = this._buildClientUserDto(user);
 
     try {
       await redisClient.setex(
         CACHE_KEYS.USER_PROFILE(userId),
         CACHE_TTL.USER_PROFILE,
-        JSON.stringify(user)
+        JSON.stringify(safeUser)
       );
-    } catch (err) {
-      // Cache write failure
+    } catch (_error) {
+      // Cache write failure is not fatal.
     }
 
-    return user;
+    return safeUser;
   }
 
   async updateMySettings(userId, data) {
     const user = await User.findById(userId);
     if (!user) {
-      throw ApiError.notFound('ط§ظ„ظ…ط³طھط®ط¯ظ… ط؛ظٹط± ظ…ظˆط¬ظˆط¯', 'USER_NOT_FOUND');
+      throw ApiError.notFound('User account was not found', 'USER_NOT_FOUND');
     }
 
     const changes = [];
@@ -312,7 +377,7 @@ class AuthService {
     }
 
     if (changes.length === 0) {
-      return user.toSafeObject();
+      return this._buildClientUserDto(user);
     }
 
     user.updatedBy = userId;
@@ -323,29 +388,21 @@ class AuthService {
     });
 
     await user.save();
+    await this._clearUserCaches(userId);
 
-    try {
-      await redisClient.del(CACHE_KEYS.USER_PROFILE(userId));
-    } catch (_error) {
-      // Non-fatal
-    }
-
-    return user.toSafeObject();
+    return this._buildClientUserDto(user);
   }
 
-  /**
-   * تغيير كلمة المرور
-   */
   async changePassword(userId, currentPassword, newPassword) {
     const user = await User.findById(userId).select('+passwordHash');
     if (!user) {
-      throw ApiError.notFound('المستخدم غير موجود', 'USER_NOT_FOUND');
+      throw ApiError.notFound('User account was not found', 'USER_NOT_FOUND');
     }
 
     const isMatch = await user.comparePassword(currentPassword);
     if (!isMatch) {
       throw ApiError.badRequest(
-        'كلمة المرور الحالية غير صحيحة',
+        'Current password is incorrect',
         'AUTH_INVALID_CREDENTIALS'
       );
     }
@@ -355,18 +412,12 @@ class AuthService {
 
     user.changeLog.push({
       by: userId,
-      action: 'تغيير كلمة المرور',
-      changes: [{ field: 'passwordHash', from: '[محمي]', to: '[محمي]' }],
+      action: 'Change password',
+      changes: [{ field: 'passwordHash', from: '[SECURED]', to: '[SECURED]' }],
     });
 
     await user.save();
-
-    // Clear caches
-    try {
-      await redisClient.del(CACHE_KEYS.USER_PROFILE(userId));
-    } catch (err) {
-      // Non-fatal
-    }
+    await this._clearUserCaches(userId);
   }
 }
 

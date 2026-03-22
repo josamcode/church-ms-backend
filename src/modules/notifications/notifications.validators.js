@@ -1,4 +1,5 @@
 const Joi = require('joi');
+const { PERMISSIONS_ARRAY } = require('../../constants/permissions');
 
 const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
 
@@ -31,6 +32,11 @@ const detailItem = Joi.object({
   return value;
 });
 
+const audienceSchema = {
+  audienceType: Joi.string().valid('all', 'permissions').optional(),
+  audiencePermissions: Joi.array().items(Joi.string().valid(...PERMISSIONS_ARRAY)).default([]),
+};
+
 const createNotification = {
   body: Joi.object({
     typeId: Joi.string().pattern(OBJECT_ID_PATTERN).required().messages({
@@ -49,6 +55,7 @@ const createNotification = {
     eventDate: Joi.date().iso().allow(null).optional(),
     coverImageUrl: Joi.string().uri().max(2000).allow('', null).optional(),
     isActive: Joi.boolean().optional(),
+    ...audienceSchema,
   }),
 };
 
@@ -62,6 +69,7 @@ const updateNotification = {
     eventDate: Joi.date().iso().allow(null).optional(),
     coverImageUrl: Joi.string().uri().max(2000).allow('', null).optional(),
     isActive: Joi.boolean().optional(),
+    ...audienceSchema,
   })
     .min(1)
     .messages({ 'object.min': 'At least one field must be provided for update' }),

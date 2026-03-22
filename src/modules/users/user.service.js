@@ -6,15 +6,17 @@ const DivineLiturgyException = require('../divineLiturgies/divineLiturgyExceptio
 const RelationRole = require('./relationRole.model');
 const ApiError = require('../../utils/ApiError');
 const redisClient = require('../../config/redis');
-const cloudinary = require('../../config/cloudinary');
-const streamifier = require('streamifier');
 const { CACHE_KEYS, CACHE_TTL } = require('../../constants/cacheKeys');
 const { filterAssignablePermissions } = require('../../constants/permissions');
 const { buildPaginationMeta } = require('../../utils/pagination');
 const { ROLES } = require('../../constants/roles');
 const { SERVICE_TYPES } = require('../divineLiturgies/divineLiturgyRecurring.model');
-const config = require('../../config/env');
 const logger = require('../../utils/logger');
+const cloudinary = require('../../config/cloudinary');
+const {
+  uploadBufferToCloudinary,
+  validateImageUpload,
+} = require('../../utils/fileUploads');
 
 class UserService {
   _toComparableId(value) {
@@ -855,43 +857,20 @@ class UserService {
    * رفع صورة إلى Cloudinary فقط (بدون ربط بمستخدم) - للاستخدام عند إنشاء مستخدم جديد
    */
   async uploadImageToCloudinary(file) {
-    if (!file) {
-      throw ApiError.badRequest('يجب اختيار صورة', 'UPLOAD_FAILED');
-    }
-    if (!config.upload.allowedImageTypes.includes(file.mimetype)) {
-      throw ApiError.badRequest(
-        'نوع الملف غير مسموح به. الأنواع المسموحة: JPEG, PNG, GIF, WEBP',
-        'UPLOAD_INVALID_TYPE'
-      );
-    }
-    if (file.size > config.upload.maxFileSize) {
-      throw ApiError.badRequest(
-        `حجم الملف يتجاوز الحد المسموح (${Math.round(config.upload.maxFileSize / 1024 / 1024)} ميجابايت)`,
-        'UPLOAD_FILE_TOO_LARGE'
-      );
-    }
+    validateImageUpload(file, { emptyLabel: 'image' });
 
-    const result = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder: 'church/avatars',
-          resource_type: 'image',
-          transformation: [
-            { width: 400, height: 400, crop: 'fill', gravity: 'face' },
-            { quality: 'auto', fetch_format: 'auto' },
-          ],
-        },
-        (error, result) => {
-          if (error) {
-            logger.error(`Cloudinary upload error: ${error.message}`);
-            reject(ApiError.internal('فشل رفع الصورة'));
-          } else {
-            resolve(result);
-          }
-        }
-      );
-      streamifier.createReadStream(file.buffer).pipe(uploadStream);
-    });
+    const result = await uploadBufferToCloudinary(
+      file,
+      {
+        folder: 'church/avatars',
+        resource_type: 'image',
+        transformation: [
+          { width: 400, height: 400, crop: 'fill', gravity: 'face' },
+          { quality: 'auto', fetch_format: 'auto' },
+        ],
+      },
+      'Failed to upload avatar image'
+    );
 
     return { url: result.secure_url, publicId: result.public_id };
   }

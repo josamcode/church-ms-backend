@@ -2,6 +2,7 @@ const http = require('http');
 const app = require('./app');
 const config = require('./config/env');
 const connectDB = require('./config/db');
+const redisClient = require('./config/redis');
 const logger = require('./utils/logger');
 const aidReminderService = require('./modules/aids/aidReminder.service');
 const { initializeChatSocketServer } = require('./modules/chats/socket/chat.socket');
@@ -9,13 +10,16 @@ const { initializeChatSocketServer } = require('./modules/chats/socket/chat.sock
 const startServer = async () => {
   try {
     await connectDB();
+    await redisClient.ensureRedisReady();
 
     const httpServer = http.createServer(app);
     initializeChatSocketServer(httpServer);
 
     const server = httpServer.listen(config.port, '0.0.0.0', () => {
       logger.info(`Server listening on port ${config.port} in ${config.env}`);
-      logger.info(`API docs available at http://localhost:${config.port}/api/docs`);
+      if (config.docs.enabled) {
+        logger.info(`API docs available at http://localhost:${config.port}/api/docs`);
+      }
     });
     aidReminderService.start();
 

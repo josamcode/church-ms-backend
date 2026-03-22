@@ -10,7 +10,7 @@ const authenticateJWT = async (req, res, next) => {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      throw ApiError.unauthorized('يجب تسجيل الدخول أولاً', 'AUTH_UNAUTHORIZED');
+      throw ApiError.unauthorized('Authentication is required', 'AUTH_UNAUTHORIZED');
     }
 
     const token = authHeader.split(' ')[1];
@@ -21,21 +21,28 @@ const authenticateJWT = async (req, res, next) => {
     } catch (error) {
       if (error.name === 'TokenExpiredError') {
         throw ApiError.unauthorized(
-          'انتهت صلاحية الجلسة. يرجى تسجيل الدخول مرة أخرى',
+          'Your session has expired. Please sign in again.',
           'AUTH_TOKEN_EXPIRED'
         );
       }
-      throw ApiError.unauthorized('رمز المصادقة غير صالح', 'AUTH_TOKEN_INVALID');
+      throw ApiError.unauthorized('Authentication token is invalid', 'AUTH_TOKEN_INVALID');
     }
 
     if (decoded.jti) {
       try {
         const isBlacklisted = await redisClient.get(CACHE_KEYS.TOKEN_BLACKLIST(decoded.jti));
         if (isBlacklisted) {
-          throw ApiError.unauthorized('تم إبطال رمز المصادقة', 'AUTH_TOKEN_BLACKLISTED');
+          throw ApiError.unauthorized(
+            'Authentication token has been revoked',
+            'AUTH_TOKEN_BLACKLISTED'
+          );
         }
       } catch (error) {
         if (error.isOperational) throw error;
+        throw ApiError.serviceUnavailable(
+          'Unable to validate the current session. Please try again shortly.',
+          'AUTH_SESSION_STORE_UNAVAILABLE'
+        );
       }
     }
 
@@ -44,12 +51,12 @@ const authenticateJWT = async (req, res, next) => {
       .lean();
 
     if (!user || user.isDeleted) {
-      throw ApiError.unauthorized('المستخدم غير موجود', 'AUTH_TOKEN_INVALID');
+      throw ApiError.unauthorized('User account was not found', 'AUTH_TOKEN_INVALID');
     }
 
     if (Number(decoded.authVersion || 0) !== Number(user.authVersion || 0)) {
       throw ApiError.unauthorized(
-        'تم تحديث صلاحيات هذا الحساب. يرجى تسجيل الدخول مرة أخرى',
+        'This session has been invalidated. Please sign in again.',
         'AUTH_SESSION_INVALIDATED'
       );
     }

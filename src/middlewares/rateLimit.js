@@ -4,32 +4,39 @@ const redisClient = require('../config/redis');
 const ApiResponse = require('../utils/apiResponse');
 const config = require('../config/env');
 
+const resolveRateLimitKey = (req) => {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (typeof forwardedFor === 'string' && forwardedFor.trim()) {
+    return forwardedFor.split(',')[0].trim();
+  }
+
+  return req.ip || req.socket?.remoteAddress || 'unknown';
+};
+
 const createRateLimiter = (windowMs, max, message, storePrefix = 'rl:') => {
   const options = {
     windowMs,
     max,
     standardHeaders: true,
     legacyHeaders: false,
-    handler: (req, res) => {
+    handler: (_req, res) => {
       return ApiResponse.error(res, {
-        message: message || 'تم تجاوز الحد المسموح به من الطلبات. يرجى المحاولة لاحقاً',
+        message: message || 'Too many requests. Please try again later.',
         errorCode: 'RATE_LIMITED',
         statusCode: 429,
       });
     },
-    keyGenerator: (req) => {
-      return req.ip || req.headers['x-forwarded-for'] || 'unknown';
-    },
+    keyGenerator: resolveRateLimitKey,
   };
 
-  if (redisClient.status === 'ready') {
+  if (!redisClient.isFallback) {
     try {
       options.store = new RedisStore({
         sendCommand: (...args) => redisClient.call(...args),
         prefix: storePrefix,
       });
-    } catch (err) {
-      // Fallback to memory store
+    } catch (_error) {
+      // Fall back to in-memory rate limiting when Redis-backed storage is unavailable.
     }
   }
 
@@ -39,22 +46,35 @@ const createRateLimiter = (windowMs, max, message, storePrefix = 'rl:') => {
 const generalLimiter = createRateLimiter(
   config.rateLimit.windowMs,
   config.rateLimit.max,
-  'تم تجاوز الحد المسموح به من الطلبات. يرجى المحاولة لاحقاً',
+  'Too many requests. Please try again later.',
   'rl:general:'
 );
 
 const authLimiter = createRateLimiter(
   15 * 60 * 1000,
   20,
-  'تم تجاوز عدد محاولات تسجيل الدخول. يرجى المحاولة بعد 15 دقيقة',
+  'Too many authentication attempts. Please try again in 15 minutes.',
   'rl:auth:'
 );
 
 const uploadLimiter = createRateLimiter(
   60 * 60 * 1000,
   30,
-  'تم تجاوز الحد المسموح لرفع الملفات. يرجى المحاولة لاحقاً',
+  'Too many upload attempts. Please try again later.',
   'rl:upload:'
 );
 
-module.exports = { generalLimiter, authLimiter, uploadLimiter, createRateLimiter };
+const publicBookingLimiter = createRateLimiter(
+  60 * 60 * 1000,
+  12,
+  'Too many public booking attempts. Please try again later.',
+  'rl:bookings:public:'
+);
+
+module.exports = {
+  generalLimiter,
+  authLimiter,
+  uploadLimiter,
+  publicBookingLimiter,
+  createRateLimiter,
+};

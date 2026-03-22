@@ -10,8 +10,8 @@ const getPublicContent = asyncHandler(async (_req, res) => {
   });
 });
 
-const getManageContent = asyncHandler(async (_req, res) => {
-  const data = await archiveService.getManageContent();
+const getManageContent = asyncHandler(async (req, res) => {
+  const data = await archiveService.getManageContent(req.userPermissions || []);
   return ApiResponse.success(res, {
     message: 'Archive workspace loaded successfully',
     data,

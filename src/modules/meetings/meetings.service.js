@@ -4,10 +4,7 @@ const { buildPaginationMeta } = require('../../utils/pagination');
 const { PERMISSIONS } = require('../../constants/permissions');
 const redisClient = require('../../config/redis');
 const { CACHE_KEYS } = require('../../constants/cacheKeys');
-const cloudinary = require('../../config/cloudinary');
-const config = require('../../config/env');
 const logger = require('../../utils/logger');
-const streamifier = require('streamifier');
 const User = require('../users/user.model');
 const Sector = require('./sector.model');
 const Meeting = require('./meeting.model');
@@ -20,6 +17,11 @@ const {
   MEETING_DOCUMENTATION_FIELD_TYPES,
   getOrCreateMeetingDocumentationConfig,
 } = require('./meetingDocumentationConfig.model');
+const {
+  uploadBufferToCloudinary,
+  validateDocumentationUpload,
+  validateImageUpload,
+} = require('../../utils/fileUploads');
 
 class MeetingsService {
   _toObjectId(id, fieldName = 'id') {
@@ -991,128 +993,113 @@ class MeetingsService {
   }
 
   async uploadImageToCloudinary(file) {
-    if (!file) {
-      throw ApiError.badRequest('Please choose an image', 'UPLOAD_FAILED');
-    }
+    validateImageUpload(file, { emptyLabel: 'image' });
 
-    if (!config.upload.allowedImageTypes.includes(file.mimetype)) {
-      throw ApiError.badRequest(
-        'Unsupported file type. Allowed: JPEG, PNG, GIF, WEBP',
-        'UPLOAD_INVALID_TYPE'
-      );
-    }
-
-    if (file.size > config.upload.maxFileSize) {
-      throw ApiError.badRequest(
-        `File exceeds size limit (${Math.round(config.upload.maxFileSize / 1024 / 1024)} MB)`,
-        'UPLOAD_FILE_TOO_LARGE'
-      );
-    }
-
-    const result = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder: 'church/meeting-avatars',
-          resource_type: 'image',
-          transformation: [
-            { width: 400, height: 400, crop: 'fill', gravity: 'auto' },
-            { quality: 'auto', fetch_format: 'auto' },
-          ],
-        },
-        (error, uploadResult) => {
-          if (error) {
-            logger.error(`Cloudinary upload error: ${error.message}`);
-            reject(ApiError.internal('Failed to upload image'));
-            return;
-          }
-
-          resolve(uploadResult);
-        }
-      );
-
-      streamifier.createReadStream(file.buffer).pipe(uploadStream);
-    });
+    const result = await uploadBufferToCloudinary(
+      file,
+      {
+        folder: 'church/meeting-avatars',
+        resource_type: 'image',
+        transformation: [
+          { width: 400, height: 400, crop: 'fill', gravity: 'auto' },
+          { quality: 'auto', fetch_format: 'auto' },
+        ],
+      },
+      'Failed to upload image'
+    );
 
     return { url: result.secure_url, publicId: result.public_id };
   }
 
-  _resolveDocumentationAssetUploadConfig(file) {
-    const mimeType = this._normalizeText(file?.mimetype).toLowerCase();
-
-    if (config.upload.allowedImageTypes.includes(mimeType)) {
+  _resolveDocumentationAssetUploadConfig(fileDetails, meetingId, documentationDate) {
+    if (fileDetails.kind === 'image') {
       return {
         kind: 'image',
         resourceType: 'image',
-        folder: 'church/meeting-documentation/images',
+        folder: `church/meeting-documentation/${String(meetingId)}/${documentationDate}/images`,
       };
     }
 
-    if ((config.upload.allowedVideoTypes || []).includes(mimeType)) {
+    if (fileDetails.kind === 'video') {
       return {
         kind: 'video',
         resourceType: 'video',
-        folder: 'church/meeting-documentation/videos',
+        folder: `church/meeting-documentation/${String(meetingId)}/${documentationDate}/videos`,
       };
     }
 
-    if ((config.upload.allowedDocumentTypes || []).includes(mimeType)) {
-      return {
-        kind: 'document',
-        resourceType: 'raw',
-        folder: 'church/meeting-documentation/documents',
-      };
+    return {
+      kind: 'document',
+      resourceType: 'raw',
+      folder: `church/meeting-documentation/${String(meetingId)}/${documentationDate}/documents`,
+    };
+  }
+
+  async _assertDocumentationUploadAllowed(
+    meetingId,
+    documentationDate,
+    { actorUserId, userPermissions = [] } = {}
+  ) {
+    if (!this._canManageMeetingDocumentation(userPermissions)) {
+      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
     }
 
-    throw ApiError.badRequest(
-      'Unsupported file type. Allowed: images, PDF, DOC, DOCX, TXT, MP4, MOV, WEBM',
-      'UPLOAD_INVALID_TYPE'
+    const meeting = await this._getMeetingForAttendance(meetingId);
+    const accessContext = this._resolveMeetingAccess({
+      meeting,
+      actorUserId,
+      userPermissions,
+    });
+
+    if (!accessContext.allowed || accessContext.accessLevel === 'member') {
+      throw ApiError.forbidden(
+        'You are not allowed to upload documentation assets for this meeting',
+        'PERMISSION_DENIED'
+      );
+    }
+
+    return this._assertPastMeetingDateAllowed(
+      meeting.day,
+      documentationDate,
+      'Documentation date'
     );
   }
 
-  async uploadDocumentationAssetToCloudinary(file) {
-    if (!file) {
-      throw ApiError.badRequest('Please choose a file', 'UPLOAD_FAILED');
-    }
+  async uploadDocumentationAssetToCloudinary(
+    file,
+    { meetingId, documentationDate, actorUserId, userPermissions = [] } = {}
+  ) {
+    const normalizedDocumentationDate = await this._assertDocumentationUploadAllowed(
+      meetingId,
+      documentationDate,
+      { actorUserId, userPermissions }
+    );
+    const fileDetails = validateDocumentationUpload(file, { emptyLabel: 'file' });
+    const uploadConfig = this._resolveDocumentationAssetUploadConfig(
+      fileDetails,
+      meetingId,
+      normalizedDocumentationDate
+    );
 
-    if (file.size > config.upload.maxDocumentationFileSize) {
-      throw ApiError.badRequest(
-        `File exceeds size limit (${Math.round(config.upload.maxDocumentationFileSize / 1024 / 1024)} MB)`,
-        'UPLOAD_FILE_TOO_LARGE'
-      );
-    }
-
-    const uploadConfig = this._resolveDocumentationAssetUploadConfig(file);
-
-    const result = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder: uploadConfig.folder,
-          resource_type: uploadConfig.resourceType,
-          use_filename: true,
-          unique_filename: true,
-        },
-        (error, uploadResult) => {
-          if (error) {
-            logger.error(`Meeting documentation upload error: ${error.message}`);
-            reject(ApiError.internal('Failed to upload documentation file'));
-            return;
-          }
-
-          resolve(uploadResult);
-        }
-      );
-
-      streamifier.createReadStream(file.buffer).pipe(uploadStream);
-    });
+    const result = await uploadBufferToCloudinary(
+      file,
+      {
+        folder: uploadConfig.folder,
+        resource_type: uploadConfig.resourceType,
+        use_filename: true,
+        unique_filename: true,
+      },
+      'Failed to upload documentation file'
+    );
 
     return {
       url: result.secure_url,
       publicId: result.public_id,
-      originalName: file.originalname || '',
-      mimeType: file.mimetype || '',
+      originalName: fileDetails.originalName || '',
+      mimeType: fileDetails.mimeType || '',
       kind: uploadConfig.kind,
       resourceType: uploadConfig.resourceType,
-      bytes: file.size || 0,
+      bytes: fileDetails.size || 0,
     };
   }
 

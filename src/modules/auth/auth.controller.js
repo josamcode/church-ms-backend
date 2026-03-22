@@ -5,11 +5,14 @@ const ApiResponse = require('../../utils/apiResponse');
 const register = asyncHandler(async (req, res) => {
   const result = await authService.register(req.body);
   return ApiResponse.created(res, {
-    message: 'تم التسجيل بنجاح',
+    message: result.requiresApproval
+      ? 'Registration submitted successfully. Your account is pending approval.'
+      : 'Registration completed successfully.',
     data: {
       user: result.user,
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
+      requiresApproval: Boolean(result.requiresApproval),
     },
   });
 });
@@ -17,7 +20,7 @@ const register = asyncHandler(async (req, res) => {
 const login = asyncHandler(async (req, res) => {
   const result = await authService.login(req.body);
   return ApiResponse.success(res, {
-    message: 'تم تسجيل الدخول بنجاح',
+    message: 'Signed in successfully',
     data: {
       user: result.user,
       accessToken: result.accessToken,
@@ -29,7 +32,7 @@ const login = asyncHandler(async (req, res) => {
 const refresh = asyncHandler(async (req, res) => {
   const result = await authService.refresh(req.body.refreshToken);
   return ApiResponse.success(res, {
-    message: 'تم تحديث الجلسة بنجاح',
+    message: 'Session refreshed successfully',
     data: {
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
@@ -40,14 +43,14 @@ const refresh = asyncHandler(async (req, res) => {
 const logout = asyncHandler(async (req, res) => {
   await authService.logout(req.user.id, req.user.jti, req.body.refreshToken);
   return ApiResponse.success(res, {
-    message: 'تم تسجيل الخروج بنجاح',
+    message: 'Signed out successfully',
   });
 });
 
 const getMe = asyncHandler(async (req, res) => {
   const user = await authService.getMe(req.user.id);
   return ApiResponse.success(res, {
-    message: 'تم جلب بيانات المستخدم بنجاح',
+    message: 'User profile loaded successfully',
     data: user,
   });
 });
@@ -67,7 +70,7 @@ const changePassword = asyncHandler(async (req, res) => {
     req.body.newPassword
   );
   return ApiResponse.success(res, {
-    message: 'تم تغيير كلمة المرور بنجاح',
+    message: 'Password changed successfully',
   });
 });
 

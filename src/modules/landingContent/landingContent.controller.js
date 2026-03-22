@@ -1,12 +1,45 @@
 const asyncHandler = require('../../utils/asyncHandler');
 const ApiResponse = require('../../utils/apiResponse');
 const landingContentService = require('./landingContent.service');
+const { validateImageUpload } = require('../../utils/fileUploads');
+
+function buildSafePublicContent(data = {}) {
+  return {
+    texts: data?.texts || { en: {}, ar: {} },
+    heroImage:
+      data?.heroImage && data.heroImage.url
+        ? {
+            url: data.heroImage.url,
+          }
+        : null,
+    stats: {
+      items: Array.isArray(data?.stats?.items) ? data.stats.items : [],
+    },
+    priests: (Array.isArray(data?.priests) ? data.priests : []).map((entry) => ({
+      user: {
+        fullName: entry?.user?.fullName || null,
+        avatar:
+          entry?.user?.avatar && entry.user.avatar.url
+            ? {
+                url: entry.user.avatar.url,
+              }
+            : null,
+      },
+      role: entry?.role || { en: '', ar: '' },
+      bio: entry?.bio || { en: '', ar: '' },
+      alt: entry?.alt || { en: '', ar: '' },
+    })),
+    location: data?.location || {},
+    socialLinks: Array.isArray(data?.socialLinks) ? data.socialLinks : [],
+    updatedAt: data?.updatedAt || null,
+  };
+}
 
 const getPublicContent = asyncHandler(async (_req, res) => {
   const data = await landingContentService.getPublicContent();
   return ApiResponse.success(res, {
     message: 'Landing content loaded successfully',
-    data,
+    data: buildSafePublicContent(data),
   });
 });
 
@@ -27,6 +60,7 @@ const updateContent = asyncHandler(async (req, res) => {
 });
 
 const uploadHeroImage = asyncHandler(async (req, res) => {
+  validateImageUpload(req.file, { emptyLabel: 'image' });
   const data = await landingContentService.uploadHeroImage(req.file, req.user.id);
   return ApiResponse.success(res, {
     message: 'Landing hero image uploaded successfully',
@@ -49,4 +83,3 @@ module.exports = {
   uploadHeroImage,
   deleteHeroImage,
 };
-
