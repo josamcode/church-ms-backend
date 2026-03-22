@@ -9,7 +9,8 @@
     "test": "jest --coverage --forceExit",
     "seed": "node scripts/seed.js",
     "backup:run": "node scripts/runBackup.js",
-    "google-drive:authorize": "node scripts/authorizeGoogleDrive.js"
+    "google-drive:authorize": "node scripts/authorizeGoogleDrive.js",
+    "push:generate-vapid": "node scripts/generateVapidKeys.js"
   },
   "keywords": [
     "church",
@@ -43,6 +44,7 @@
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "uuid": "^11.0.5",
+    "web-push": "^3.6.7",
     "winston": "^3.17.0"
   },
   "overrides": {

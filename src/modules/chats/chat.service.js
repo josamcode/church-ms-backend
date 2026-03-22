@@ -12,6 +12,7 @@ const {
   emitThreadRemoved,
   emitMessageCreated,
 } = require('./chat.realtime');
+const userNotificationsService = require('../notifications/userNotifications.service');
 
 class ChatsService {
   _toObjectId(id, fieldName = 'id') {
@@ -522,11 +523,39 @@ class ChatsService {
 
     const participantUserIds = (thread.participants || []).map((participant) => participant.userId);
     const usersMap = await this._loadUsersMap([message.senderId]);
+    const sender = usersMap.get(this._normalizeId(message.senderId));
+    const senderName = sender?.fullName || 'New message';
+    const recipientUserIds = this._normalizeIdArray(
+      participantUserIds.filter(
+        (participantUserId) => this._normalizeId(participantUserId) !== this._normalizeId(message.senderId)
+      )
+    );
     emitMessageCreated(participantUserIds, {
       threadId: this._normalizeId(thread._id),
       message: this._mapMessage(message, usersMap),
     });
     emitThreadRefresh(participantUserIds, thread._id);
+
+    if (recipientUserIds.length > 0) {
+      const notificationTitle =
+        thread.type === CHAT_THREAD_TYPES.GROUP
+          ? `${senderName} in ${thread.title || 'Group chat'}`
+          : senderName;
+
+      await userNotificationsService.createForUsers(recipientUserIds, {
+        type: 'chat_message',
+        title: notificationTitle,
+        message: String(message.text || '').trim().slice(0, 2000),
+        link: `/dashboard/chats?threadId=${this._normalizeId(thread._id)}`,
+        metadata: {
+          threadId: this._normalizeId(thread._id),
+          messageId: this._normalizeId(message._id),
+          senderId: this._normalizeId(message.senderId),
+          senderName,
+          threadType: thread.type,
+        },
+      });
+    }
   }
 
   async listChats({ viewerUserId, viewerPermissions = [], filters = {} }) {

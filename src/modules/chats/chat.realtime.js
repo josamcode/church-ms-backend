@@ -38,6 +38,7 @@ const emitTypingIndicator = (userIds, payload) => {
 module.exports = {
   setChatIo,
   getUserRoom,
+  emitToUsers,
   emitThreadRefresh,
   emitThreadRemoved,
   emitMessageCreated,

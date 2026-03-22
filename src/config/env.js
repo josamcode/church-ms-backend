@@ -144,6 +144,17 @@ const googleOAuthAllowMissingToken = parseBoolean(
   process.env.GOOGLE_OAUTH_ALLOW_MISSING_TOKEN,
   false
 );
+const vapidPublicKey = String(process.env.VAPID_PUBLIC_KEY || '').trim();
+const vapidPrivateKey = String(process.env.VAPID_PRIVATE_KEY || '').trim();
+const vapidEmail = String(process.env.VAPID_EMAIL || '').trim();
+const pushCredentialsCount = [vapidPublicKey, vapidPrivateKey, vapidEmail].filter(Boolean).length;
+const pushEnabled = pushCredentialsCount === 3;
+
+if (pushCredentialsCount > 0 && pushCredentialsCount < 3) {
+  throw new Error(
+    'Web push configuration is incomplete. Provide VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_EMAIL together.'
+  );
+}
 
 const config = {
   env,
@@ -230,6 +241,18 @@ const config = {
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'text/plain',
     ],
+  },
+
+  push: {
+    enabled: pushEnabled,
+    vapidPublicKey,
+    vapidPrivateKey,
+    vapidEmail,
+    vapidSubject: vapidEmail
+      ? vapidEmail.startsWith('mailto:')
+        ? vapidEmail
+        : `mailto:${vapidEmail}`
+      : '',
   },
 
   cache: {
@@ -370,6 +393,12 @@ if (config.backup.enabled) {
         'BACKUP_NOTIFICATION_EMAILS must include at least one email address when BACKUP_EMAIL_NOTIFICATIONS_ENABLED=true.'
       );
     }
+  }
+}
+
+if (config.push.enabled) {
+  if (!config.push.vapidPublicKey || !config.push.vapidPrivateKey || !config.push.vapidSubject) {
+    throw new Error('Web push configuration is incomplete.');
   }
 }
 

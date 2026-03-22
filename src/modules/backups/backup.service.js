@@ -8,6 +8,8 @@ const logger = require('../../utils/logger');
 const BackupJob = require('./backupJob.model');
 const backupNotificationService = require('./backupNotification.service');
 const googleDriveService = require('./googleDrive.service');
+const userNotificationsService = require('../notifications/userNotifications.service');
+const { PERMISSIONS } = require('../../constants/permissions');
 
 const BACKUP_JOB_NAME = 'mongo-drive-backup';
 
@@ -224,6 +226,40 @@ class BackupService {
     }
   }
 
+  async _sendSuccessInAppNotification({
+    runId,
+    trigger,
+    fileName,
+    sizeBytes,
+    driveFileId,
+    driveLink,
+  }) {
+    try {
+      await userNotificationsService.notifyUsersWithAnyPermissions(
+        [PERMISSIONS.NOTIFICATIONS_CREATE],
+        {
+          type: 'backup_success',
+          title: 'Database backup completed',
+          message: `Backup ${fileName} was created and uploaded successfully.`,
+          metadata: {
+            runId,
+            trigger,
+            fileName,
+            sizeBytes,
+            driveFileId,
+            driveLink,
+          },
+        }
+      );
+    } catch (error) {
+      logger.warn('Failed to create in-app backup success notification', {
+        runId,
+        trigger,
+        reason: this._sanitizeText(error.message),
+      });
+    }
+  }
+
   async _sendFailureNotification({
     runId,
     trigger,
@@ -254,6 +290,38 @@ class BackupService {
       });
     } catch (error) {
       logger.error('MongoDB backup failure email notification failed', {
+        runId,
+        trigger,
+        reason: this._sanitizeText(error.message),
+      });
+    }
+  }
+
+  async _sendFailureInAppNotification({
+    runId,
+    trigger,
+    stage,
+    reason,
+    fileName = '',
+  }) {
+    try {
+      await userNotificationsService.notifyUsersWithAnyPermissions(
+        [PERMISSIONS.NOTIFICATIONS_CREATE],
+        {
+          type: 'backup_failure',
+          title: 'Database backup failed',
+          message: `Backup ${fileName || 'run'} failed during ${stage}. ${reason}`,
+          metadata: {
+            runId,
+            trigger,
+            stage,
+            reason,
+            fileName,
+          },
+        }
+      );
+    } catch (error) {
+      logger.warn('Failed to create in-app backup failure notification', {
         runId,
         trigger,
         reason: this._sanitizeText(error.message),
@@ -557,6 +625,14 @@ class BackupService {
         driveLink: upload.webViewLink,
         cleanupWarning,
       });
+      await this._sendSuccessInAppNotification({
+        runId,
+        trigger,
+        fileName,
+        sizeBytes: fileStats.size,
+        driveFileId: upload.id,
+        driveLink: upload.webViewLink,
+      });
 
       return {
         status: 'success',
@@ -613,6 +689,13 @@ class BackupService {
         reason: sanitizedError.message,
         fileName,
         localFilePath,
+      });
+      await this._sendFailureInAppNotification({
+        runId,
+        trigger,
+        stage: sanitizedError.stage,
+        reason: sanitizedError.message,
+        fileName,
       });
 
       throw sanitizedError;

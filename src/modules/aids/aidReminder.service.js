@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const Aid = require('./aid.model');
 const Notification = require('../notifications/notification.model');
 const NotificationType = require('../notifications/notificationType.model');
+const userNotificationsService = require('../notifications/userNotifications.service');
 const { PERMISSIONS } = require('../../constants/permissions');
 const logger = require('../../utils/logger');
 const config = require('../../config/env');
@@ -155,7 +156,29 @@ class AidReminderService {
     const payload = this._buildReminderPayload(group, nextOccurrenceDate, type._id, type.name, existing);
 
     if (!existing) {
-      return Notification.create(payload);
+      const created = await Notification.create(payload);
+      await userNotificationsService.notifyUsersWithAnyPermissions(
+        REMINDER_AUDIENCE_PERMISSIONS,
+        {
+          type: 'aid_reminder',
+          title: 'Aid reminder due',
+          message: `${group.description} is due on ${payload.sourceData?.dueDate || this._formatDate(nextOccurrenceDate)}.`,
+          link: '/dashboard/lords-brethren/aid-history/notifications',
+          metadata: {
+            reminderNotificationId: String(created._id),
+            sourceType: REMINDER_SOURCE_TYPE,
+            dueDate: payload.sourceData?.dueDate || null,
+            nextDueDate: payload.sourceData?.nextDueDate || null,
+            category: String(group.category || '').trim(),
+            occurrence: payload.sourceData?.occurrence || normalizeAidOccurrence(group.occurrence),
+            description: String(group.description || '').trim(),
+          },
+        },
+        {
+          createdBy: group.recordedBy || null,
+        }
+      );
+      return created;
     }
 
     existing.typeId = payload.typeId;
