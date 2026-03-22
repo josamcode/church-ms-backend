@@ -1,6 +1,6 @@
 const Joi = require('joi');
-const { ROLES_ARRAY } = require('../../constants/roles');
 const { AGE_GROUPS_ARRAY } = require('../../constants/ageGroups');
+const { EDUCATION_STAGE_VALUES } = require('../../constants/education');
 
 const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
 
@@ -93,6 +93,38 @@ const searchUsers = {
   query: Joi.object({
     q: Joi.string().trim().allow('').optional(),
     limit: Joi.number().integer().min(1).max(50).default(20),
+    forBroadcast: Joi.boolean().optional().default(false),
+    ageGroups: Joi.alternatives().try(
+      Joi.array().items(Joi.string().valid(...AGE_GROUPS_ARRAY)),
+      Joi.string().valid(...AGE_GROUPS_ARRAY)
+    ).optional(),
+    educationStages: Joi.alternatives().try(
+      Joi.array().items(Joi.string().valid(...EDUCATION_STAGE_VALUES)),
+      Joi.string().valid(...EDUCATION_STAGE_VALUES)
+    ).optional(),
+    tags: Joi.alternatives().try(
+      Joi.array().items(Joi.string().trim().min(1)),
+      Joi.string().trim().min(1)
+    ).optional(),
+    diseases: Joi.alternatives().try(
+      Joi.array().items(Joi.string().trim().min(1)),
+      Joi.string().trim().min(1)
+    ).optional(),
+    genders: Joi.alternatives().try(
+      Joi.array().items(Joi.string().valid('male', 'female', 'other')),
+      Joi.string().valid('male', 'female', 'other')
+    ).optional(),
+    familyNames: Joi.alternatives().try(
+      Joi.array().items(Joi.string().trim().min(1)),
+      Joi.string().trim().min(1)
+    ).optional(),
+    houseNames: Joi.alternatives().try(
+      Joi.array().items(Joi.string().trim().min(1)),
+      Joi.string().trim().min(1)
+    ).optional(),
+    includeLocked: Joi.boolean().optional().default(false),
+    includeUsersWithoutLogin: Joi.boolean().optional().default(false),
+    includeSelf: Joi.boolean().optional().default(false),
   }),
 };
 
@@ -100,12 +132,11 @@ const createBroadcast = {
   body: Joi.object({
     template: Joi.string().trim().min(1).max(2000).required(),
     audience: Joi.object({
-      all: Joi.boolean().optional().default(false),
       userIds: Joi.array().items(Joi.string().pattern(OBJECT_ID_PATTERN)).optional(),
-      roles: Joi.array().items(Joi.string().valid(...ROLES_ARRAY)).optional(),
       tags: Joi.array().items(Joi.string().trim().min(1)).optional(),
       diseases: Joi.array().items(Joi.string().trim().min(1)).optional(),
       ageGroups: Joi.array().items(Joi.string().valid(...AGE_GROUPS_ARRAY)).optional(),
+      educationStages: Joi.array().items(Joi.string().valid(...EDUCATION_STAGE_VALUES)).optional(),
       genders: Joi.array().items(Joi.string().valid('male', 'female', 'other')).optional(),
       familyNames: Joi.array().items(Joi.string().trim().min(1)).optional(),
       houseNames: Joi.array().items(Joi.string().trim().min(1)).optional(),

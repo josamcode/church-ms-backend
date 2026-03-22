@@ -2,6 +2,12 @@ const asyncHandler = require('../../utils/asyncHandler');
 const ApiResponse = require('../../utils/apiResponse');
 const chatService = require('./chat.service');
 
+const ensureArray = (value) => {
+  if (Array.isArray(value)) return value;
+  if (value === undefined || value === null || value === '') return [];
+  return [value];
+};
+
 const listChats = asyncHandler(async (req, res) => {
   const chats = await chatService.listChats({
     viewerUserId: req.user.id,
@@ -47,6 +53,19 @@ const searchUsers = asyncHandler(async (req, res) => {
     actorUserId: req.user.id,
     q: req.query.q,
     limit: req.query.limit,
+    forBroadcast: req.query.forBroadcast,
+    audience: {
+      ageGroups: ensureArray(req.query.ageGroups),
+      educationStages: ensureArray(req.query.educationStages),
+      tags: ensureArray(req.query.tags),
+      diseases: ensureArray(req.query.diseases),
+      genders: ensureArray(req.query.genders),
+      familyNames: ensureArray(req.query.familyNames),
+      houseNames: ensureArray(req.query.houseNames),
+      includeLocked: req.query.includeLocked,
+      includeUsersWithoutLogin: req.query.includeUsersWithoutLogin,
+      includeSelf: req.query.includeSelf,
+    },
   });
 
   return ApiResponse.success(res, {

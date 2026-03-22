@@ -320,6 +320,7 @@ class UserService {
   async getProfileOptionValues() {
     const baseFilter = { isDeleted: { $ne: true } };
     const [
+      tags,
       incomeSources,
       jobTitles,
       employerNames,
@@ -332,6 +333,7 @@ class UserService {
       universityNames,
       facultyNames,
     ] = await Promise.all([
+      User.distinct('tags', baseFilter),
       User.distinct('financial.source', baseFilter),
       User.distinct('employment.jobTitle', baseFilter),
       User.distinct('employment.employerName', baseFilter),
@@ -346,6 +348,7 @@ class UserService {
     ]);
 
     return {
+      tags: this._normalizeDistinctStringValues(tags),
       incomeSources: this._normalizeDistinctStringValues(incomeSources),
       jobTitles: this._normalizeDistinctStringValues(jobTitles),
       employerNames: this._normalizeDistinctStringValues(employerNames),

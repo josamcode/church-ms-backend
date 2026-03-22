@@ -2,8 +2,8 @@ const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
 const { buildPaginationMeta } = require('../../utils/pagination');
 const { PERMISSIONS } = require('../../constants/permissions');
-const { ROLES_ARRAY } = require('../../constants/roles');
 const { AGE_GROUPS_ARRAY } = require('../../constants/ageGroups');
+const { EDUCATION_STAGE_VALUES } = require('../../constants/education');
 const User = require('../users/user.model');
 const { ChatThread, CHAT_THREAD_TYPES, CHAT_PARTICIPANT_ROLES } = require('./chatThread.model');
 const { ChatMessage, CHAT_MESSAGE_SOURCES } = require('./chatMessage.model');
@@ -104,6 +104,8 @@ class ChatsService {
         : null,
       phonePrimary: user.phonePrimary || '',
       ageGroup: user.ageGroup || '',
+      familyName: user.familyName || '',
+      houseName: user.houseName || '',
     };
   }
 
@@ -514,12 +516,17 @@ class ChatsService {
     };
   }
 
-  async searchUsers({ actorUserId, q = '', limit = 20 }) {
-    const query = {
-      isDeleted: { $ne: true },
-      hasLogin: true,
-      _id: { $ne: this._toObjectId(actorUserId, 'actorUserId') },
-    };
+  async searchUsers({ actorUserId, q = '', limit = 20, forBroadcast = false, audience = {} }) {
+    const query = forBroadcast
+      ? this._buildBroadcastAudienceQuery(audience, actorUserId, {
+          requireSelector: false,
+          ignoreUserIds: true,
+        })
+      : {
+          isDeleted: { $ne: true },
+          hasLogin: true,
+          _id: { $ne: this._toObjectId(actorUserId, 'actorUserId') },
+        };
 
     const trimmedQuery = String(q || '').trim();
     if (trimmedQuery) {
@@ -531,7 +538,7 @@ class ChatsService {
     }
 
     const users = await User.find(query)
-      .select('fullName role avatar phonePrimary ageGroup')
+      .select('fullName role avatar phonePrimary ageGroup familyName houseName')
       .sort({ fullName: 1 })
       .limit(limit)
       .lean();
@@ -553,8 +560,8 @@ class ChatsService {
     ]);
 
     return {
-      roles: ROLES_ARRAY,
       ageGroups: AGE_GROUPS_ARRAY,
+      educationStages: EDUCATION_STAGE_VALUES,
       genders: ['male', 'female', 'other'],
       tags: this._normalizeDistinctStrings(tags),
       diseases: this._normalizeDistinctStrings(diseases),
@@ -784,7 +791,24 @@ class ChatsService {
     return payload.thread;
   }
 
-  _buildBroadcastAudienceQuery(audience = {}, actorUserId) {
+  _hasBroadcastAudienceSelectors(audience = {}) {
+    return Boolean(
+      (Array.isArray(audience.userIds) && audience.userIds.length > 0) ||
+      (Array.isArray(audience.tags) && audience.tags.length > 0) ||
+      (Array.isArray(audience.diseases) && audience.diseases.length > 0) ||
+      (Array.isArray(audience.ageGroups) && audience.ageGroups.length > 0) ||
+      (Array.isArray(audience.educationStages) && audience.educationStages.length > 0) ||
+      (Array.isArray(audience.genders) && audience.genders.length > 0) ||
+      (Array.isArray(audience.familyNames) && audience.familyNames.length > 0) ||
+      (Array.isArray(audience.houseNames) && audience.houseNames.length > 0)
+    );
+  }
+
+  _buildBroadcastAudienceQuery(
+    audience = {},
+    actorUserId,
+    { requireSelector = false, ignoreUserIds = false } = {}
+  ) {
     const query = {
       isDeleted: { $ne: true },
     };
@@ -799,14 +823,10 @@ class ChatsService {
 
     const andConditions = [];
 
-    if (Array.isArray(audience.userIds) && audience.userIds.length > 0) {
+    if (!ignoreUserIds && Array.isArray(audience.userIds) && audience.userIds.length > 0) {
       query._id = {
         $in: audience.userIds.map((id) => this._toObjectId(id, 'audience.userIds')),
       };
-    }
-
-    if (Array.isArray(audience.roles) && audience.roles.length > 0) {
-      query.role = { $in: audience.roles };
     }
 
     if (Array.isArray(audience.tags) && audience.tags.length > 0) {
@@ -819,6 +839,10 @@ class ChatsService {
 
     if (Array.isArray(audience.ageGroups) && audience.ageGroups.length > 0) {
       query.ageGroup = { $in: audience.ageGroups };
+    }
+
+    if (Array.isArray(audience.educationStages) && audience.educationStages.length > 0) {
+      query['education.stage'] = { $in: audience.educationStages };
     }
 
     if (Array.isArray(audience.genders) && audience.genders.length > 0) {
@@ -839,21 +863,9 @@ class ChatsService {
       });
     }
 
-    const hasAnySelector = Boolean(
-      audience.all ||
-      (Array.isArray(audience.userIds) && audience.userIds.length > 0) ||
-      (Array.isArray(audience.roles) && audience.roles.length > 0) ||
-      (Array.isArray(audience.tags) && audience.tags.length > 0) ||
-      (Array.isArray(audience.diseases) && audience.diseases.length > 0) ||
-      (Array.isArray(audience.ageGroups) && audience.ageGroups.length > 0) ||
-      (Array.isArray(audience.genders) && audience.genders.length > 0) ||
-      (Array.isArray(audience.familyNames) && audience.familyNames.length > 0) ||
-      (Array.isArray(audience.houseNames) && audience.houseNames.length > 0)
-    );
-
-    if (!hasAnySelector) {
+    if (requireSelector && !this._hasBroadcastAudienceSelectors(audience)) {
       throw ApiError.badRequest(
-        'Broadcast audience must include at least one selector or set audience.all to true',
+        'Broadcast audience must include at least one selector',
         'VALIDATION_ERROR'
       );
     }
