@@ -304,7 +304,34 @@ class ChatsService {
     };
   }
 
-  _mapMessage(message, usersMap) {
+  _getMessageDeliveryStatus(thread, message, viewerUserId) {
+    const viewerId = this._normalizeId(viewerUserId);
+    const senderId = this._normalizeId(message?.senderId);
+    if (!thread || !viewerId || senderId !== viewerId) {
+      return null;
+    }
+
+    const recipientParticipants = (thread.participants || []).filter(
+      (participant) => this._normalizeId(participant.userId) !== viewerId
+    );
+    if (!recipientParticipants.length) {
+      return null;
+    }
+
+    const messageCreatedAt = new Date(message.createdAt).getTime();
+    const seenByCount = recipientParticipants.filter((participant) => {
+      if (!participant.lastReadAt) return false;
+      return new Date(participant.lastReadAt).getTime() >= messageCreatedAt;
+    }).length;
+
+    return {
+      state: seenByCount === recipientParticipants.length ? 'seen' : 'delivered',
+      seenByCount,
+      recipientCount: recipientParticipants.length,
+    };
+  }
+
+  _mapMessage(message, usersMap, { thread = null, viewerUserId = null } = {}) {
     const sender = usersMap.get(this._normalizeId(message.senderId));
     return {
       id: this._normalizeId(message._id),
@@ -314,6 +341,7 @@ class ChatsService {
       text: message.text || '',
       metadata: message.metadata || null,
       sender: this._mapUser(sender),
+      deliveryStatus: this._getMessageDeliveryStatus(thread, message, viewerUserId),
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
     };
@@ -340,7 +368,9 @@ class ChatsService {
 
     return {
       thread: this._mapThread(thread, viewerUserId, usersMap),
-      messages: messages.reverse().map((message) => this._mapMessage(message, usersMap)),
+      messages: messages
+        .reverse()
+        .map((message) => this._mapMessage(message, usersMap, { thread, viewerUserId })),
     };
   }
 
@@ -511,7 +541,9 @@ class ChatsService {
     const meta = buildPaginationMeta(messages, limit, 'createdAt');
 
     return {
-      messages: messages.reverse().map((message) => this._mapMessage(message, usersMap)),
+      messages: messages
+        .reverse()
+        .map((message) => this._mapMessage(message, usersMap, { thread, viewerUserId })),
       meta,
     };
   }
@@ -745,7 +777,14 @@ class ChatsService {
     await this._notifyMessage(editableThread._id, message._id);
 
     const usersMap = await this._loadUsersMap([message.senderId]);
-    return this._mapMessage(message.toObject ? message.toObject() : message, usersMap);
+    return this._mapMessage(
+      message.toObject ? message.toObject() : message,
+      usersMap,
+      {
+        thread: editableThread.toObject ? editableThread.toObject() : editableThread,
+        viewerUserId: actorUserId,
+      }
+    );
   }
 
   async markThreadAsRead(chatId, { actorUserId, viewerPermissions = [], messageId = null }) {
@@ -783,7 +822,10 @@ class ChatsService {
 
     editableThread.updatedBy = this._toObjectId(actorUserId, 'actorUserId');
     await editableThread.save();
-    emitThreadRefresh([actorUserId], editableThread._id);
+    emitThreadRefresh(
+      this._normalizeIdArray((editableThread.participants || []).map((item) => item.userId)),
+      editableThread._id
+    );
 
     const payload = await this._buildThreadPayload(editableThread.toObject(), actorUserId, {
       recentMessagesLimit: 20,
