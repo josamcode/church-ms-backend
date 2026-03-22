@@ -82,11 +82,17 @@ const changePassword = {
 
 const updateMySettings = {
   body: Joi.object({
-    allowOthersToViewCreatedConfessionSessions: Joi.boolean().required().messages({
+    allowOthersToViewCreatedConfessionSessions: Joi.boolean().optional().messages({
       'boolean.base': 'Confession session visibility must be true or false',
-      'any.required': 'Confession session visibility is required',
     }),
-  }),
+    allowOthersToViewCreatedChats: Joi.boolean().optional().messages({
+      'boolean.base': 'Chat visibility must be true or false',
+    }),
+  })
+    .min(1)
+    .messages({
+      'object.min': 'At least one account setting is required',
+    }),
 };
 
 module.exports = {

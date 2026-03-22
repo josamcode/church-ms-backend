@@ -12,7 +12,6 @@ const notFound = require('./middlewares/notFound');
 const errorHandler = require('./middlewares/errorHandler');
 const logger = require('./utils/logger');
 
-// Route imports
 const authRoutes = require('./modules/auth/auth.routes');
 const userRoutes = require('./modules/users/user.routes');
 const settingsRoutes = require('./modules/settings/settings.routes');
@@ -26,13 +25,11 @@ const notificationsRoutes = require('./modules/notifications/notifications.route
 const bookingsRoutes = require('./modules/bookings/bookings.routes');
 const householdClassificationRoutes = require('./modules/householdClassifications/householdClassification.routes');
 const aidRoutes = require('./modules/aids/aid.routes');
+const chatRoutes = require('./modules/chats/chat.routes');
 
-// Swagger
 const { swaggerUi, specs } = require('./docs/swagger');
 
 const app = express();
-
-/* ══════════════════ Security Middleware ══════════════════ */
 
 app.use(helmet());
 
@@ -48,26 +45,16 @@ app.use(
 app.use(mongoSanitize());
 app.use(xss());
 app.use(hpp());
-
-/* ══════════════════ Request ID ══════════════════ */
-
 app.use(requestId);
-
-/* ══════════════════ Body Parsing ══════════════════ */
-
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-/* ══════════════════ Rate Limiting ══════════════════ */
-
 app.use('/api', generalLimiter);
-
-/* ══════════════════ Logging ══════════════════ */
 
 if (config.env !== 'test') {
   const morganStream = {
     write: (message) => logger.info(message.trim()),
   };
+
   app.use(
     morgan(':method :url :status :res[content-length] - :response-time ms', {
       stream: morganStream,
@@ -76,19 +63,15 @@ if (config.env !== 'test') {
   );
 }
 
-/* ══════════════════ API Documentation ══════════════════ */
-
 app.use(
   '/api/docs',
   swaggerUi.serve,
   swaggerUi.setup(specs, {
     explorer: true,
     customCss: '.swagger-ui .topbar { display: none }',
-    customSiteTitle: 'نظام إدارة الكنيسة - توثيق API',
+    customSiteTitle: 'Church Management API Docs',
   })
 );
-
-/* ══════════════════ Routes ══════════════════ */
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -100,16 +83,15 @@ app.use('/api/meetings', meetingsRoutes);
 app.use('/api/divine-liturgies', divineLiturgiesRoutes);
 app.use('/api/archive', archiveRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/chats', chatRoutes);
 app.use('/api/bookings', bookingsRoutes);
 app.use('/api/household-classifications', householdClassificationRoutes);
 app.use('/api/aids', aidRoutes);
 
-/* ══════════════════ Health Check ══════════════════ */
-
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
-    message: 'الخادم يعمل بنجاح',
+    message: 'Server is healthy',
     data: {
       uptime: process.uptime(),
       environment: config.env,
@@ -119,18 +101,6 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
-
-/* ══════════════════ Ignore Socket.IO probes (no WebSocket server) ══════════════════ */
-
-app.use((req, res, next) => {
-  if (req.path.startsWith('/socket.io')) {
-    res.status(404).end();
-    return;
-  }
-  next();
-});
-
-/* ══════════════════ Error Handling ══════════════════ */
 
 app.use(notFound);
 app.use(errorHandler);

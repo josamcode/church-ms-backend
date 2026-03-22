@@ -297,6 +297,20 @@ class AuthService {
       }
     }
 
+    if (data.allowOthersToViewCreatedChats !== undefined) {
+      const nextValue = Boolean(data.allowOthersToViewCreatedChats);
+      const previousValue = user.allowOthersToViewCreatedChats !== false;
+
+      if (previousValue !== nextValue) {
+        changes.push({
+          field: 'allowOthersToViewCreatedChats',
+          from: previousValue,
+          to: nextValue,
+        });
+        user.allowOthersToViewCreatedChats = nextValue;
+      }
+    }
+
     if (changes.length === 0) {
       return user.toSafeObject();
     }

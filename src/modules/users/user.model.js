@@ -354,6 +354,10 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    allowOthersToViewCreatedChats: {
+      type: Boolean,
+      default: true,
+    },
     meetingIds: [
       { type: mongoose.Schema.Types.ObjectId, ref: 'Meeting' },
     ],
@@ -415,6 +419,7 @@ userSchema.index({ 'mother.userId': 1 }, { sparse: true });
 userSchema.index({ 'spouse.userId': 1 }, { sparse: true });
 userSchema.index({ 'familyMembers.userId': 1 }, { sparse: true });
 userSchema.index({ allowOthersToViewCreatedConfessionSessions: 1 });
+userSchema.index({ allowOthersToViewCreatedChats: 1 });
 
 /* ──────────────── Virtuals ──────────────── */
 
