@@ -3,6 +3,14 @@ primary_region = "ams"
 
 [build]
 
+[[files]]
+  guest_path = "/app/secure/google-oauth-client.json"
+  secret_name = "GOOGLE_OAUTH_CLIENT_JSON_B64"
+
+[[files]]
+  guest_path = "/app/secure/google-oauth-token.json"
+  secret_name = "GOOGLE_OAUTH_TOKEN_JSON_B64"
+
 [http_service]
   internal_port = 5000
   force_https = true
