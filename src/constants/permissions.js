@@ -160,7 +160,6 @@ const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.NOTIFICATIONS_UPDATE,
     PERMISSIONS.NOTIFICATIONS_TYPES_MANAGE,
     PERMISSIONS.CHATS_VIEW,
-    PERMISSIONS.CHATS_START,
     PERMISSIONS.CHATS_SEND,
     PERMISSIONS.CHATS_GROUPS_MANAGE,
     PERMISSIONS.BOOKINGS_VIEW_OWN,
@@ -185,9 +184,42 @@ const ROLE_PERMISSIONS = Object.freeze({
     PERMISSIONS.ARCHIVE_VIEW,
     PERMISSIONS.NOTIFICATIONS_VIEW,
     PERMISSIONS.CHATS_VIEW,
-    PERMISSIONS.CHATS_START,
     PERMISSIONS.CHATS_SEND,
   ],
 });
 
-module.exports = { PERMISSIONS, PERMISSIONS_ARRAY, ROLE_PERMISSIONS };
+const SUPER_ADMIN_ONLY_PERMISSIONS = Object.freeze([PERMISSIONS.CHATS_START]);
+
+const filterAssignablePermissions = (role, permissions = []) => {
+  const normalized = [...new Set(
+    (Array.isArray(permissions) ? permissions : []).filter((permission) =>
+      PERMISSIONS_ARRAY.includes(permission)
+    )
+  )];
+
+  if (role === ROLES.SUPER_ADMIN) {
+    return normalized;
+  }
+
+  return normalized.filter((permission) => !SUPER_ADMIN_ONLY_PERMISSIONS.includes(permission));
+};
+
+const getEffectivePermissions = (role, extraPermissions = [], deniedPermissions = []) => {
+  if (role === ROLES.SUPER_ADMIN) {
+    return [...PERMISSIONS_ARRAY];
+  }
+
+  const rolePerms = ROLE_PERMISSIONS[role] || [];
+  const effectiveSet = new Set([...rolePerms, ...filterAssignablePermissions(role, extraPermissions)]);
+  filterAssignablePermissions(role, deniedPermissions).forEach((permission) => effectiveSet.delete(permission));
+  return [...effectiveSet];
+};
+
+module.exports = {
+  PERMISSIONS,
+  PERMISSIONS_ARRAY,
+  ROLE_PERMISSIONS,
+  SUPER_ADMIN_ONLY_PERMISSIONS,
+  filterAssignablePermissions,
+  getEffectivePermissions,
+};

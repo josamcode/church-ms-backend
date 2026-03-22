@@ -31,10 +31,15 @@ const emitMessageCreated = (userIds, payload) => {
   emitToUsers(userIds, 'chat:message:new', payload);
 };
 
+const emitTypingIndicator = (userIds, payload) => {
+  emitToUsers(userIds, 'chat:typing', payload);
+};
+
 module.exports = {
   setChatIo,
   getUserRoom,
   emitThreadRefresh,
   emitThreadRemoved,
   emitMessageCreated,
+  emitTypingIndicator,
 };

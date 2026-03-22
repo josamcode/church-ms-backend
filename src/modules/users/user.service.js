@@ -9,6 +9,7 @@ const redisClient = require('../../config/redis');
 const cloudinary = require('../../config/cloudinary');
 const streamifier = require('streamifier');
 const { CACHE_KEYS, CACHE_TTL } = require('../../constants/cacheKeys');
+const { filterAssignablePermissions } = require('../../constants/permissions');
 const { buildPaginationMeta } = require('../../utils/pagination');
 const { ROLES } = require('../../constants/roles');
 const { SERVICE_TYPES } = require('../divineLiturgies/divineLiturgyRecurring.model');
@@ -67,6 +68,24 @@ class UserService {
 
     normalized.confessionFatherName = trimmedName || null;
     normalized.confessionFatherUserId = null;
+    return normalized;
+  }
+
+  _sanitizePermissionOverridesForRole(data = {}, role = ROLES.USER) {
+    if (!data || typeof data !== 'object') {
+      return data;
+    }
+
+    const normalized = { ...data };
+
+    if (normalized.extraPermissions !== undefined) {
+      normalized.extraPermissions = filterAssignablePermissions(role, normalized.extraPermissions);
+    }
+
+    if (normalized.deniedPermissions !== undefined) {
+      normalized.deniedPermissions = filterAssignablePermissions(role, normalized.deniedPermissions);
+    }
+
     return normalized;
   }
 
@@ -131,38 +150,43 @@ class UserService {
       updateData: normalizedData,
     });
 
-    const orConditions = [{ phonePrimary: normalizedData.phonePrimary }];
-    if (normalizedData.email) orConditions.push({ email: normalizedData.email });
-    if (normalizedData.nationalId) orConditions.push({ nationalId: normalizedData.nationalId });
+    const preparedData = this._sanitizePermissionOverridesForRole(
+      normalizedData,
+      normalizedData.role || ROLES.USER
+    );
+
+    const orConditions = [{ phonePrimary: preparedData.phonePrimary }];
+    if (preparedData.email) orConditions.push({ email: preparedData.email });
+    if (preparedData.nationalId) orConditions.push({ nationalId: preparedData.nationalId });
 
     const existing = await User.findOne({ $or: orConditions }).lean();
 
     if (existing) {
-      if (existing.phonePrimary === normalizedData.phonePrimary) {
+      if (existing.phonePrimary === preparedData.phonePrimary) {
         throw ApiError.conflict('رقم الهاتف مسجل مسبقاً', 'DUPLICATE_PHONE');
       }
-      if (normalizedData.email && existing.email === normalizedData.email) {
+      if (preparedData.email && existing.email === preparedData.email) {
         throw ApiError.conflict('البريد الإلكتروني مسجل مسبقاً', 'DUPLICATE_EMAIL');
       }
-      if (normalizedData.nationalId && existing.nationalId === normalizedData.nationalId) {
+      if (preparedData.nationalId && existing.nationalId === preparedData.nationalId) {
         throw ApiError.conflict('الرقم القومي مسجل مسبقاً', 'DUPLICATE_NATIONAL_ID');
       }
     }
 
-    const userData = { ...normalizedData, createdBy: createdByUserId };
+    const userData = { ...preparedData, createdBy: createdByUserId };
     if (
-      normalizedData.avatar &&
-      typeof normalizedData.avatar === 'object' &&
-      normalizedData.avatar.url &&
-      normalizedData.avatar.publicId
+      preparedData.avatar &&
+      typeof preparedData.avatar === 'object' &&
+      preparedData.avatar.url &&
+      preparedData.avatar.publicId
     ) {
-      userData.avatar = { url: normalizedData.avatar.url, publicId: normalizedData.avatar.publicId };
+      userData.avatar = { url: preparedData.avatar.url, publicId: preparedData.avatar.publicId };
     }
 
-    if (normalizedData.password) {
+    if (preparedData.password) {
       userData.hasLogin = true;
-      userData.passwordHash = normalizedData.password;
-      userData.loginIdentifierType = normalizedData.email ? 'email' : 'phone';
+      userData.passwordHash = preparedData.password;
+      userData.loginIdentifierType = preparedData.email ? 'email' : 'phone';
       delete userData.password;
     }
 
@@ -707,6 +731,11 @@ class UserService {
       updateData: normalizedData,
     });
 
+    const preparedData = this._sanitizePermissionOverridesForRole(
+      normalizedData,
+      normalizedData.role || user.role || ROLES.USER
+    );
+
     const allowedFields = [
       'fullName', 'gender', 'birthDate', 'nationalId', 'notes',
       'phonePrimary', 'phoneSecondary', 'whatsappNumber', 'email',
@@ -722,9 +751,9 @@ class UserService {
     const authSensitiveFields = new Set(['role', 'hasLogin', 'extraPermissions', 'deniedPermissions']);
 
     for (const field of allowedFields) {
-      if (normalizedData[field] !== undefined) {
+      if (preparedData[field] !== undefined) {
         const oldVal = user[field];
-        const newVal = normalizedData[field];
+        const newVal = preparedData[field];
 
         if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
           changes.push({
@@ -740,8 +769,8 @@ class UserService {
       }
     }
 
-    if (normalizedData.password !== undefined && normalizedData.hasLogin !== false) {
-      const nextPassword = typeof normalizedData.password === 'string' ? normalizedData.password.trim() : '';
+    if (preparedData.password !== undefined && preparedData.hasLogin !== false) {
+      const nextPassword = typeof preparedData.password === 'string' ? preparedData.password.trim() : '';
       if (nextPassword) {
         if (!user.hasLogin) {
           changes.push({
@@ -753,8 +782,8 @@ class UserService {
         }
 
         const nextLoginIdentifierType =
-          normalizedData.email !== undefined
-            ? (normalizedData.email ? 'email' : 'phone')
+          preparedData.email !== undefined
+            ? (preparedData.email ? 'email' : 'phone')
             : (user.email ? 'email' : 'phone');
 
         if (user.loginIdentifierType !== nextLoginIdentifierType) {
