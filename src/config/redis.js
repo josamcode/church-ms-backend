@@ -66,8 +66,7 @@ const swapClient = (nextClient) => {
 };
 
 const createRedisClient = () => {
-  const options = {
-    password: config.redis.password || undefined,
+  const baseOptions = {
     maxRetriesPerRequest: 1,
     retryStrategy: (times) => {
       if (times > 5) {
@@ -81,11 +80,12 @@ const createRedisClient = () => {
   };
 
   const client = config.redis.url
-    ? new Redis(config.redis.url, options)
+    ? new Redis(config.redis.url, baseOptions)
     : new Redis({
       host: config.redis.host,
       port: config.redis.port,
-      ...options,
+      password: config.redis.password || undefined,
+      ...baseOptions,
     });
 
   client.isFallback = false;

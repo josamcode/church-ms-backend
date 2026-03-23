@@ -149,6 +149,18 @@ const vapidPrivateKey = String(process.env.VAPID_PRIVATE_KEY || '').trim();
 const vapidEmail = String(process.env.VAPID_EMAIL || '').trim();
 const pushCredentialsCount = [vapidPublicKey, vapidPrivateKey, vapidEmail].filter(Boolean).length;
 const pushEnabled = pushCredentialsCount === 3;
+const redisUrl = String(process.env.REDIS_URL || '').trim();
+const redisHost = redisUrl ? '' : String(process.env.REDIS_HOST || '').trim();
+const redisPort = redisUrl
+  ? undefined
+  : process.env.REDIS_PORT
+    ? parseInteger(process.env.REDIS_PORT, 6379)
+    : redisHost
+      ? 6379
+      : undefined;
+const redisPassword = redisUrl
+  ? undefined
+  : String(process.env.REDIS_PASSWORD || '').trim() || undefined;
 
 if (pushCredentialsCount > 0 && pushCredentialsCount < 3) {
   throw new Error(
@@ -167,14 +179,10 @@ const config = {
   },
 
   redis: {
-    url: process.env.REDIS_URL || '',
-    host: process.env.REDIS_HOST || '',
-    port: process.env.REDIS_PORT
-      ? parseInteger(process.env.REDIS_PORT, 6379)
-      : process.env.REDIS_HOST
-        ? 6379
-        : undefined,
-    password: process.env.REDIS_PASSWORD || undefined,
+    url: redisUrl,
+    host: redisHost,
+    port: redisPort,
+    password: redisPassword,
     enabled: process.env.REDIS_ENABLED ? process.env.REDIS_ENABLED !== 'false' : true,
     required: parseBoolean(process.env.REDIS_REQUIRED, isProduction),
     readyTimeoutMs: parseInteger(process.env.REDIS_READY_TIMEOUT_MS, 5000),
