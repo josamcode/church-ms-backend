@@ -157,11 +157,12 @@ class UserService {
       normalizedData.role || ROLES.USER
     );
 
-    const orConditions = [{ phonePrimary: preparedData.phonePrimary }];
+    const orConditions = [];
+    if (preparedData.phonePrimary) orConditions.push({ phonePrimary: preparedData.phonePrimary });
     if (preparedData.email) orConditions.push({ email: preparedData.email });
     if (preparedData.nationalId) orConditions.push({ nationalId: preparedData.nationalId });
 
-    const existing = await User.findOne({ $or: orConditions }).lean();
+    const existing = orConditions.length > 0 ? await User.findOne({ $or: orConditions }).lean() : null;
 
     if (existing) {
       if (existing.phonePrimary === preparedData.phonePrimary) {

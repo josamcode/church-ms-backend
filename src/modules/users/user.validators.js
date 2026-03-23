@@ -102,7 +102,7 @@ const createUser = {
     gender: Joi.string().valid('male', 'female', 'other').optional().messages({
       'any.only': 'الجنس يجب أن يكون ذكر أو أنثى أو آخر',
     }),
-    birthDate: Joi.date().iso().max('now').required().messages({
+    birthDate: Joi.date().iso().max('now').allow(null, '').optional().messages({
       'date.base': 'تاريخ الميلاد غير صالح',
       'date.max': 'تاريخ الميلاد لا يمكن أن يكون في المستقبل',
       'any.required': 'تاريخ الميلاد مطلوب',
@@ -114,7 +114,7 @@ const createUser = {
     notes: Joi.string().trim().max(1000).allow('', null).optional().messages({
       'string.max': 'الملاحظات يجب ألا تتجاوز 1000 حرف',
     }),
-    phonePrimary: Joi.string().trim().min(10).max(15).required().messages({
+    phonePrimary: Joi.string().trim().min(10).max(15).allow('', null).optional().messages({
       'string.empty': 'رقم الهاتف الأساسي مطلوب',
       'string.min': 'رقم الهاتف يجب أن يكون 10 أرقام على الأقل',
       'string.max': 'رقم الهاتف يجب ألا يتجاوز 15 رقم',
@@ -168,10 +168,10 @@ const updateUser = {
   body: Joi.object({
     fullName: Joi.string().trim().min(2).max(100).optional(),
     gender: Joi.string().valid('male', 'female', 'other').optional(),
-    birthDate: Joi.date().iso().max('now').optional(),
+    birthDate: Joi.date().iso().max('now').allow(null, '').optional(),
     nationalId: Joi.string().trim().min(10).max(20).allow(null, '').optional(),
     notes: Joi.string().trim().max(1000).allow(null, '').optional(),
-    phonePrimary: Joi.string().trim().min(10).max(15).optional(),
+    phonePrimary: Joi.string().trim().min(10).max(15).allow(null, '').optional(),
     phoneSecondary: Joi.string().trim().min(10).max(15).allow(null, '').optional(),
     whatsappNumber: Joi.string().trim().min(10).max(15).allow(null, '').optional(),
     email: Joi.string().email().lowercase().trim().allow(null, '').optional(),

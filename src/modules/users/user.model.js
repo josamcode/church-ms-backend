@@ -391,6 +391,10 @@ const userSchema = new mongoose.Schema(
 /* ──────────────── Indexes ──────────────── */
 // Note: phonePrimary, email, nationalId already have indexes via unique:true in schema
 
+userSchema.path('birthDate').required(false);
+userSchema.path('phonePrimary').required(false);
+userSchema.path('phonePrimary').options.sparse = true;
+
 userSchema.index({ fullName: 'text' });
 userSchema.index({ tags: 1 });
 userSchema.index({ ageGroup: 1 });
