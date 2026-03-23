@@ -75,12 +75,14 @@ class PushService {
   _buildDeliveryOptions(notification) {
     const normalizedType = String(notification?.type || '').trim().toLowerCase();
     const isHighPriority = ['chat_message', 'admin', 'backup_failure'].includes(normalizedType);
+    const notificationId = String(notification?.id || '').trim();
+    const topic = /^[A-Za-z0-9_-]{1,32}$/.test(notificationId) ? notificationId : undefined;
 
     return {
       // Keep notifications deliverable even if the browser is sleeping or briefly offline.
       TTL: isHighPriority ? 60 * 60 : 6 * 60 * 60,
       urgency: isHighPriority ? 'high' : 'normal',
-      topic: notification?.id ? `user-notification-${notification.id}` : undefined,
+      topic,
     };
   }
 
@@ -123,6 +125,12 @@ class PushService {
       }
     );
 
+    logger.info('Push subscription saved', {
+      subscriptionId: persisted?._id ? String(persisted._id) : null,
+      userId: String(userId),
+      endpoint,
+    });
+
     return this._mapSubscription(persisted);
   }
 
@@ -136,6 +144,13 @@ class PushService {
       userId,
       endpoint: normalizedEndpoint,
     });
+
+    if (result.deletedCount > 0) {
+      logger.info('Push subscription removed by client', {
+        userId: String(userId),
+        endpoint: normalizedEndpoint,
+      });
+    }
 
     return {
       removed: result.deletedCount > 0,
@@ -182,6 +197,8 @@ class PushService {
 
     let sentCount = 0;
     let failedCount = 0;
+    const deliveredEndpoints = [];
+    const invalidEndpoints = [];
 
     for (let index = 0; index < results.length; index += 1) {
       const result = results[index];
@@ -189,6 +206,7 @@ class PushService {
 
       if (result.status === 'fulfilled') {
         sentCount += 1;
+        deliveredEndpoints.push(subscription.endpoint);
         await PushSubscription.updateOne(
           { _id: subscription._id },
           { $set: { lastUsedAt: new Date() } }
@@ -201,6 +219,7 @@ class PushService {
       const reason = result.reason?.body || result.reason?.message || 'Push delivery failed';
 
       if (INVALID_PUSH_STATUS_CODES.has(Number(statusCode || 0))) {
+        invalidEndpoints.push(subscription.endpoint);
         await this._removeInvalidSubscription(subscription, reason);
         continue;
       }
@@ -212,6 +231,16 @@ class PushService {
         reason,
       });
     }
+
+    logger.info('Push delivery summary', {
+      notificationId: String(notification.id || ''),
+      userId: String(userId),
+      subscriptionCount: subscriptions.length,
+      sentCount,
+      failedCount,
+      deliveredEndpoints,
+      invalidEndpoints,
+    });
 
     return {
       sentCount,
