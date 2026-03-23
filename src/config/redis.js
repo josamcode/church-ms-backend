@@ -116,6 +116,9 @@ const redisClient = {
   get status() {
     return currentClient.status;
   },
+  get isReady() {
+    return currentClient.status === 'ready';
+  },
   get isFallback() {
     return Boolean(currentClient.isFallback);
   },

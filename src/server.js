@@ -1,5 +1,4 @@
 const http = require('http');
-const app = require('./app');
 const config = require('./config/env');
 const connectDB = require('./config/db');
 const redisClient = require('./config/redis');
@@ -12,6 +11,7 @@ const startServer = async () => {
   try {
     await connectDB();
     await redisClient.ensureRedisReady();
+    const app = require('./app');
 
     const httpServer = http.createServer(app);
     initializeChatSocketServer(httpServer);

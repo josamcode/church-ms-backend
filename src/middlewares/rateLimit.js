@@ -61,7 +61,7 @@ const createRateLimiter = (
     skip,
   };
 
-  if (!redisClient.isFallback) {
+  if (redisClient.isReady) {
     try {
       options.store = new RedisStore({
         sendCommand: (...args) => redisClient.call(...args),
