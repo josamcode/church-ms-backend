@@ -28,6 +28,7 @@ const bookingsRoutes = require('./modules/bookings/bookings.routes');
 const householdClassificationRoutes = require('./modules/householdClassifications/householdClassification.routes');
 const aidRoutes = require('./modules/aids/aid.routes');
 const chatRoutes = require('./modules/chats/chat.routes');
+const systemAnalyticsRoutes = require('./modules/systemAnalytics/systemAnalytics.routes');
 
 const { swaggerUi, specs } = require('./docs/swagger');
 
@@ -106,6 +107,7 @@ app.use('/api/chats', chatRoutes);
 app.use('/api/bookings', bookingsRoutes);
 app.use('/api/household-classifications', householdClassificationRoutes);
 app.use('/api/aids', aidRoutes);
+app.use('/api/system-analytics', systemAnalyticsRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({

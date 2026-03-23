@@ -1,19 +1,50 @@
 const rateLimit = require('express-rate-limit');
 const RedisStore = require('rate-limit-redis').default;
+const jwt = require('jsonwebtoken');
 const redisClient = require('../config/redis');
 const ApiResponse = require('../utils/apiResponse');
 const config = require('../config/env');
 
-const resolveRateLimitKey = (req) => {
-  const forwardedFor = req.headers['x-forwarded-for'];
-  if (typeof forwardedFor === 'string' && forwardedFor.trim()) {
-    return forwardedFor.split(',')[0].trim();
+const getBearerToken = (req) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null;
   }
 
-  return req.ip || req.socket?.remoteAddress || 'unknown';
+  const token = authHeader.slice('Bearer '.length).trim();
+  return token || null;
 };
 
-const createRateLimiter = (windowMs, max, message, storePrefix = 'rl:') => {
+const resolveIpRateLimitKey = (req) =>
+  `ip:${req.ip || req.socket?.remoteAddress || 'unknown'}`;
+
+const resolveAuthenticatedRateLimitKey = (req) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    return null;
+  }
+
+  try {
+    const decoded = jwt.verify(token, config.jwt.accessSecret);
+    return decoded?.sub ? `user:${decoded.sub}` : null;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const resolveRateLimitKey = (req) =>
+  resolveAuthenticatedRateLimitKey(req) || resolveIpRateLimitKey(req);
+
+const shouldSkipRateLimit = (req) =>
+  req.method === 'OPTIONS' || req.path === '/health';
+
+const createRateLimiter = (
+  windowMs,
+  max,
+  message,
+  storePrefix = 'rl:',
+  { keyGenerator = resolveRateLimitKey, skip = shouldSkipRateLimit } = {}
+) => {
   const options = {
     windowMs,
     max,
@@ -26,7 +57,8 @@ const createRateLimiter = (windowMs, max, message, storePrefix = 'rl:') => {
         statusCode: 429,
       });
     },
-    keyGenerator: resolveRateLimitKey,
+    keyGenerator,
+    skip,
   };
 
   if (!redisClient.isFallback) {
@@ -54,7 +86,8 @@ const authLimiter = createRateLimiter(
   15 * 60 * 1000,
   20,
   'Too many authentication attempts. Please try again in 15 minutes.',
-  'rl:auth:'
+  'rl:auth:',
+  { keyGenerator: resolveIpRateLimitKey }
 );
 
 const uploadLimiter = createRateLimiter(
