@@ -7,7 +7,12 @@ const { CACHE_KEYS } = require('../../../constants/cacheKeys');
 const { getUserEffectivePermissions } = require('../../../middlewares/permissions');
 const User = require('../../users/user.model');
 const { ChatThread } = require('../chatThread.model');
-const { setChatIo, getUserRoom, emitTypingIndicator } = require('../chat.realtime');
+const {
+  setChatIo,
+  getUserRoom,
+  emitTypingIndicator,
+  syncSocketActiveThreadView,
+} = require('../chat.realtime');
 
 const parseAllowedOrigins = () => {
   if (!Array.isArray(config.cors.allowedOrigins) || config.cors.allowedOrigins.length === 0) {
@@ -144,6 +149,39 @@ const initializeChatSocketServer = (httpServer) => {
         });
       } catch (_error) {
         // Typing indicators are best-effort and should not interrupt the socket session.
+      }
+    });
+
+    socket.on('chat:thread:view', async (payload = {}) => {
+      try {
+        const threadId = String(payload.threadId || '').trim();
+        if (!threadId) {
+          syncSocketActiveThreadView(socket, null);
+          return;
+        }
+
+        if (!mongoose.Types.ObjectId.isValid(threadId)) {
+          syncSocketActiveThreadView(socket, null);
+          return;
+        }
+
+        const thread = await ChatThread.findById(threadId)
+          .select('participants isDeleted')
+          .lean();
+
+        if (!thread || thread.isDeleted) {
+          syncSocketActiveThreadView(socket, null);
+          return;
+        }
+
+        const actorId = String(socket.data.user?.id || '');
+        const isParticipant = (thread.participants || []).some(
+          (participant) => String(participant.userId) === actorId
+        );
+
+        syncSocketActiveThreadView(socket, isParticipant ? threadId : null);
+      } catch (_error) {
+        syncSocketActiveThreadView(socket, null);
       }
     });
 

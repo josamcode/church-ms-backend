@@ -11,6 +11,7 @@ const {
   emitThreadRefresh,
   emitThreadRemoved,
   emitMessageCreated,
+  filterUsersNotViewingThread,
 } = require('./chat.realtime');
 const userNotificationsService = require('../notifications/userNotifications.service');
 
@@ -537,24 +538,27 @@ class ChatsService {
     emitThreadRefresh(participantUserIds, thread._id);
 
     if (recipientUserIds.length > 0) {
+      const notificationRecipientUserIds = filterUsersNotViewingThread(thread._id, recipientUserIds);
       const notificationTitle =
         thread.type === CHAT_THREAD_TYPES.GROUP
           ? `${senderName} in ${thread.title || 'Group chat'}`
           : senderName;
 
-      await userNotificationsService.createForUsers(recipientUserIds, {
-        type: 'chat_message',
-        title: notificationTitle,
-        message: String(message.text || '').trim().slice(0, 2000),
-        link: `/dashboard/chats?threadId=${this._normalizeId(thread._id)}`,
-        metadata: {
-          threadId: this._normalizeId(thread._id),
-          messageId: this._normalizeId(message._id),
-          senderId: this._normalizeId(message.senderId),
-          senderName,
-          threadType: thread.type,
-        },
-      });
+      if (notificationRecipientUserIds.length > 0) {
+        await userNotificationsService.createForUsers(notificationRecipientUserIds, {
+          type: 'chat_message',
+          title: notificationTitle,
+          message: String(message.text || '').trim().slice(0, 2000),
+          link: `/dashboard/chats?threadId=${this._normalizeId(thread._id)}`,
+          metadata: {
+            threadId: this._normalizeId(thread._id),
+            messageId: this._normalizeId(message._id),
+            senderId: this._normalizeId(message.senderId),
+            senderName,
+            threadType: thread.type,
+          },
+        });
+      }
     }
   }
 

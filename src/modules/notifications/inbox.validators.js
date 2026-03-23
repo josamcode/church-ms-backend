@@ -19,6 +19,15 @@ const markRead = {
   }),
 };
 
+const markThreadRead = {
+  params: Joi.object({
+    threadId: Joi.string().pattern(OBJECT_ID_PATTERN).required().messages({
+      'string.pattern.base': 'Thread id is invalid',
+      'any.required': 'Thread id is required',
+    }),
+  }),
+};
+
 const sendSystemNotification = {
   body: Joi.object({
     type: Joi.string()
@@ -59,5 +68,6 @@ const sendSystemNotification = {
 module.exports = {
   listNotifications,
   markRead,
+  markThreadRead,
   sendSystemNotification,
 };

@@ -158,6 +158,15 @@ class UserNotificationsService {
     });
   }
 
+  async _emitThreadRead(userId, threadId) {
+    const unreadCount = await this._computeUnreadCount(userId);
+    emitToUsers([userId], 'notification:thread:read', {
+      threadId: String(threadId),
+      unreadCount,
+    });
+    return unreadCount;
+  }
+
   async listNotifications({ userId, cursor, limit = 20 }) {
     const query = {
       userId: this._toObjectId(userId, 'userId'),
@@ -231,6 +240,34 @@ class UserNotificationsService {
     return {
       updatedCount: Number(result.modifiedCount || 0),
       unreadCount: 0,
+    };
+  }
+
+  async markThreadNotificationsAsRead(threadId, userId) {
+    const normalizedThreadId = this._normalizeId(this._toObjectId(threadId, 'threadId'));
+    const now = new Date();
+
+    const result = await UserNotification.updateMany(
+      {
+        userId: this._toObjectId(userId, 'userId'),
+        isRead: false,
+        type: 'chat_message',
+        'metadata.threadId': normalizedThreadId,
+      },
+      {
+        $set: {
+          isRead: true,
+          readAt: now,
+        },
+      }
+    );
+
+    const unreadCount = await this._emitThreadRead(userId, normalizedThreadId);
+
+    return {
+      threadId: normalizedThreadId,
+      updatedCount: Number(result.modifiedCount || 0),
+      unreadCount,
     };
   }
 

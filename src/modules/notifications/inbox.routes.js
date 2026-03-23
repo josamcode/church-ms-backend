@@ -31,6 +31,14 @@ router.patch(
 );
 
 router.patch(
+  '/threads/:threadId/read',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.NOTIFICATIONS_VIEW),
+  validate(inboxValidators.markThreadRead),
+  inboxController.markThreadAsRead
+);
+
+router.patch(
   '/:id/read',
   authenticateJWT,
   authorizePermissions(PERMISSIONS.NOTIFICATIONS_VIEW),

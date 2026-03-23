@@ -32,6 +32,17 @@ const markAsRead = asyncHandler(async (req, res) => {
   });
 });
 
+const markThreadAsRead = asyncHandler(async (req, res) => {
+  const payload = await userNotificationsService.markThreadNotificationsAsRead(
+    req.params.threadId,
+    req.user.id
+  );
+  return ApiResponse.success(res, {
+    message: 'Chat notifications marked as read successfully',
+    data: payload,
+  });
+});
+
 const markAllAsRead = asyncHandler(async (req, res) => {
   const payload = await userNotificationsService.markAllAsRead(req.user.id);
   return ApiResponse.success(res, {
@@ -63,6 +74,7 @@ module.exports = {
   listNotifications,
   getUnreadCount,
   markAsRead,
+  markThreadAsRead,
   markAllAsRead,
   sendSystemNotification,
 };
