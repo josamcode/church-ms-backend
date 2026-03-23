@@ -1,6 +1,8 @@
 const winston = require('winston');
 const path = require('path');
 const fs = require('fs');
+const isProduction = process.env.NODE_ENV === 'production';
+const enableConsoleLogging = process.env.LOG_TO_CONSOLE !== 'false';
 
 const logsDir = path.join(__dirname, '../../logs');
 if (!fs.existsSync(logsDir)) {
@@ -14,7 +16,7 @@ const logFormat = winston.format.combine(
 );
 
 const logger = winston.createLogger({
-  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+  level: isProduction ? 'info' : 'debug',
   format: logFormat,
   defaultMeta: { service: 'church-api' },
   transports: [
@@ -32,16 +34,18 @@ const logger = winston.createLogger({
   ],
 });
 
-if (process.env.NODE_ENV !== 'production') {
+if (enableConsoleLogging) {
   logger.add(
     new winston.transports.Console({
-      format: winston.format.combine(
-        winston.format.colorize(),
-        winston.format.printf(({ level, message, timestamp, service, ...meta }) => {
-          const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
-          return `${timestamp} [${service}] ${level}: ${message}${metaStr}`;
-        })
-      ),
+      format: isProduction
+        ? logFormat
+        : winston.format.combine(
+          winston.format.colorize(),
+          winston.format.printf(({ level, message, timestamp, service, ...meta }) => {
+            const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
+            return `${timestamp} [${service}] ${level}: ${message}${metaStr}`;
+          })
+        ),
     })
   );
 }
