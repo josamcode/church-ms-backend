@@ -4,6 +4,7 @@ const connectDB = require('./config/db');
 const redisClient = require('./config/redis');
 const logger = require('./utils/logger');
 const aidReminderService = require('./modules/aids/aidReminder.service');
+const meetingReminderService = require('./modules/meetings/meetingReminder.service');
 const backupService = require('./modules/backups/backup.service');
 const { initializeChatSocketServer } = require('./modules/chats/socket/chat.socket');
 
@@ -23,11 +24,13 @@ const startServer = async () => {
       }
     });
     aidReminderService.start();
+    meetingReminderService.start();
     backupService.start();
 
     const gracefulShutdown = (signal) => {
       logger.info(`Received ${signal}. Shutting down server...`);
       aidReminderService.stop();
+      meetingReminderService.stop();
       backupService.stop();
       server.close(() => {
         logger.info('Server closed successfully');

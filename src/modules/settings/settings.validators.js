@@ -19,9 +19,11 @@ const updatePlatformSettings = {
   body: Joi.object({
     notificationTemplates: Joi.object({
       confessionNextSession: notificationTemplateSchema,
+      meetingReminder: notificationTemplateSchema,
       dashboardNotificationPublished: notificationTemplateSchema,
       divineLiturgyExceptionalCase: notificationTemplateSchema,
     }).required(),
+    meetingReminderLeadMinutes: Joi.number().integer().min(0).max(10080).required(),
   }).required(),
 };
 

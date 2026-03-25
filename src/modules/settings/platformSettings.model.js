@@ -46,6 +46,19 @@ const platformSettingsSchema = new mongoose.Schema(
           },
         }),
       },
+      meetingReminder: {
+        type: notificationTemplateSchema,
+        default: () => ({
+          title: {
+            ar: 'تذكير بموعد الاجتماع',
+            en: 'تذكير بموعد الاجتماع',
+          },
+          message: {
+            ar: 'سيتبقى {reminderLeadTime} على اجتماع {meetingName} يوم {meetingDay} في {meetingDateTime}.',
+            en: 'سيتبقى {reminderLeadTime} على اجتماع {meetingName} يوم {meetingDay} في {meetingDateTime}.',
+          },
+        }),
+      },
       dashboardNotificationPublished: {
         type: notificationTemplateSchema,
         default: () => ({
@@ -72,6 +85,12 @@ const platformSettingsSchema = new mongoose.Schema(
           },
         }),
       },
+    },
+    meetingReminderLeadMinutes: {
+      type: Number,
+      min: 0,
+      max: 10080,
+      default: 60,
     },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,

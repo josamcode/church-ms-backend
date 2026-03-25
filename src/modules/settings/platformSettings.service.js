@@ -15,6 +15,16 @@ const DEFAULT_NOTIFICATION_TEMPLATES = Object.freeze({
       en: 'تم تحديد موعد جلسة الاعتراف القادمة بتاريخ {nextSessionAt}.',
     },
   },
+  meetingReminder: {
+    title: {
+      ar: 'تذكير بموعد الاجتماع',
+      en: 'تذكير بموعد الاجتماع',
+    },
+    message: {
+      ar: 'سيتبقى {reminderLeadTime} على اجتماع {meetingName} يوم {meetingDay} في {meetingDateTime}.',
+      en: 'سيتبقى {reminderLeadTime} على اجتماع {meetingName} يوم {meetingDay} في {meetingDateTime}.',
+    },
+  },
   dashboardNotificationPublished: {
     title: {
       ar: 'إشعار جديد',
@@ -73,6 +83,80 @@ const DEFAULT_TEMPLATE_TOKENS = Object.freeze({
       sampleValue: {
         ar: 'جلسة اعتراف',
         en: 'Confession session',
+      },
+    },
+  ],
+  meetingReminder: [
+    {
+      key: 'meetingName',
+      token: '{meetingName}',
+      label: {
+        ar: 'اسم الاجتماع',
+        en: 'Meeting name',
+      },
+      sampleValue: {
+        ar: 'اجتماع الشباب',
+        en: 'Youth Meeting',
+      },
+    },
+    {
+      key: 'meetingDay',
+      token: '{meetingDay}',
+      label: {
+        ar: 'يوم الاجتماع',
+        en: 'Meeting day',
+      },
+      sampleValue: {
+        ar: 'الأحد',
+        en: 'Sunday',
+      },
+    },
+    {
+      key: 'meetingTime',
+      token: '{meetingTime}',
+      label: {
+        ar: 'وقت الاجتماع',
+        en: 'Meeting time',
+      },
+      sampleValue: {
+        ar: '6:30 م',
+        en: '6:30 PM',
+      },
+    },
+    {
+      key: 'meetingDateTime',
+      token: '{meetingDateTime}',
+      label: {
+        ar: 'تاريخ ووقت الاجتماع',
+        en: 'Meeting date/time',
+      },
+      sampleValue: {
+        ar: '10 أبريل 2026، 6:30 م',
+        en: 'Apr 10, 2026, 6:30 PM',
+      },
+    },
+    {
+      key: 'sectorName',
+      token: '{sectorName}',
+      label: {
+        ar: 'اسم القطاع',
+        en: 'Sector name',
+      },
+      sampleValue: {
+        ar: 'قطاع الشباب',
+        en: 'Youth Sector',
+      },
+    },
+    {
+      key: 'reminderLeadTime',
+      token: '{reminderLeadTime}',
+      label: {
+        ar: 'المدة قبل الاجتماع',
+        en: 'Reminder lead time',
+      },
+      sampleValue: {
+        ar: 'ساعة واحدة',
+        en: '1 hour',
       },
     },
   ],
@@ -213,6 +297,15 @@ class PlatformSettingsService {
     );
   }
 
+  _normalizeLeadMinutes(value, fallback = 60) {
+    const parsedValue = Number(value);
+    if (!Number.isFinite(parsedValue)) {
+      return fallback;
+    }
+
+    return Math.max(0, Math.min(10080, Math.round(parsedValue)));
+  }
+
   _cloneAvailableTokens() {
     return Object.entries(DEFAULT_TEMPLATE_TOKENS).reduce(
       (accumulator, [templateKey, tokenList]) => ({
@@ -230,6 +323,7 @@ class PlatformSettingsService {
   _buildPayload(document = null) {
     return {
       notificationTemplates: this._normalizeNotificationTemplates(document?.notificationTemplates),
+      meetingReminderLeadMinutes: this._normalizeLeadMinutes(document?.meetingReminderLeadMinutes, 60),
       availableTokens: this._cloneAvailableTokens(),
       createdAt: document?.createdAt || null,
       updatedAt: document?.updatedAt || null,
@@ -264,6 +358,10 @@ class PlatformSettingsService {
     const document = await this._ensureDocument();
 
     document.notificationTemplates = this._normalizeNotificationTemplates(payload.notificationTemplates);
+    document.meetingReminderLeadMinutes = this._normalizeLeadMinutes(
+      payload.meetingReminderLeadMinutes,
+      document.meetingReminderLeadMinutes
+    );
     document.updatedBy = this._toObjectId(actorUserId, 'actorUserId');
 
     if (!document.createdBy) {
@@ -336,6 +434,48 @@ class PlatformSettingsService {
     }).format(date);
   }
 
+  _formatWeekday(value, language = 'ar') {
+    const normalizedValue = this._normalizeText(value, 40);
+    if (!normalizedValue) return '';
+
+    const localizedWeekdays = {
+      Sunday: { ar: 'الأحد', en: 'Sunday' },
+      Monday: { ar: 'الاثنين', en: 'Monday' },
+      Tuesday: { ar: 'الثلاثاء', en: 'Tuesday' },
+      Wednesday: { ar: 'الأربعاء', en: 'Wednesday' },
+      Thursday: { ar: 'الخميس', en: 'Thursday' },
+      Friday: { ar: 'الجمعة', en: 'Friday' },
+      Saturday: { ar: 'السبت', en: 'Saturday' },
+    };
+
+    return localizedWeekdays[normalizedValue]?.[language] || normalizedValue;
+  }
+
+  _formatLeadTime(value, language = 'ar') {
+    const minutes = this._normalizeLeadMinutes(value, 60);
+    if (minutes === 0) {
+      return language === 'ar' ? 'الآن' : 'now';
+    }
+
+    if (minutes % 1440 === 0) {
+      const days = minutes / 1440;
+      return language === 'ar'
+        ? `${days} ${days === 1 ? 'يوم' : 'أيام'}`
+        : `${days} day${days === 1 ? '' : 's'}`;
+    }
+
+    if (minutes % 60 === 0) {
+      const hours = minutes / 60;
+      return language === 'ar'
+        ? `${hours} ${hours === 1 ? 'ساعة' : 'ساعات'}`
+        : `${hours} hour${hours === 1 ? '' : 's'}`;
+    }
+
+    return language === 'ar'
+      ? `${minutes} دقيقة`
+      : `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  }
+
   _renderLocalizedTemplate(template = {}, contexts = {}) {
     const localized = {
       title: {
@@ -369,6 +509,34 @@ class PlatformSettingsService {
         creatorName: context.creatorName || '',
         nextSessionAt: this._formatDateTime(context.nextSessionAt, 'en'),
         sessionTypeName: context.sessionTypeName || '',
+      },
+    });
+  }
+
+  async renderMeetingReminderNotification(context = {}) {
+    const settings = await this.getManageSettings();
+    const template = settings.notificationTemplates.meetingReminder;
+    const reminderLeadMinutes = this._normalizeLeadMinutes(
+      context.reminderLeadMinutes,
+      settings.meetingReminderLeadMinutes
+    );
+
+    return this._renderLocalizedTemplate(template, {
+      ar: {
+        meetingName: context.meetingName || '',
+        meetingDay: this._formatWeekday(context.meetingDay, 'ar'),
+        meetingTime: this._formatTime(context.meetingTime, 'ar'),
+        meetingDateTime: this._formatDateTime(context.meetingDateTime, 'ar'),
+        sectorName: context.sectorName || '',
+        reminderLeadTime: this._formatLeadTime(reminderLeadMinutes, 'ar'),
+      },
+      en: {
+        meetingName: context.meetingName || '',
+        meetingDay: this._formatWeekday(context.meetingDay, 'en'),
+        meetingTime: this._formatTime(context.meetingTime, 'en'),
+        meetingDateTime: this._formatDateTime(context.meetingDateTime, 'en'),
+        sectorName: context.sectorName || '',
+        reminderLeadTime: this._formatLeadTime(reminderLeadMinutes, 'en'),
       },
     });
   }

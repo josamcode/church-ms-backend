@@ -275,6 +275,13 @@ const config = {
     ),
   },
 
+  meetingReminders: {
+    pollIntervalMs: parseInteger(
+      process.env.MEETING_REMINDER_POLL_INTERVAL_MS,
+      60 * 1000
+    ),
+  },
+
   backup: {
     enabled: backupEnabled,
     schedulerEnabled: backupEnabled ? backupSchedulerEnabled : false,
