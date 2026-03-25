@@ -234,7 +234,7 @@ const config = {
 
   rateLimit: {
     windowMs: parseInteger(process.env.RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
-    max: parseInteger(process.env.RATE_LIMIT_MAX, isProduction ? 600 : 100000),
+    max: parseInteger(process.env.RATE_LIMIT_MAX, isProduction ? 600 : 100),
   },
 
   upload: {
