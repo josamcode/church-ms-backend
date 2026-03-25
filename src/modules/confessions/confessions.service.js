@@ -5,9 +5,12 @@ const ConfessionSessionType = require('./confessionSessionType.model');
 const ConfessionConfig = require('./confessionConfig.model');
 const ChurchPriest = require('../divineLiturgies/churchPriest.model');
 const ApiError = require('../../utils/ApiError');
+const logger = require('../../utils/logger');
 const { PERMISSIONS } = require('../../constants/permissions');
 const { ROLES } = require('../../constants/roles');
 const { buildPaginationMeta } = require('../../utils/pagination');
+const userNotificationsService = require('../notifications/userNotifications.service');
+const platformSettingsService = require('../settings/platformSettings.service');
 
 const { seedDefaultSessionTypes } = ConfessionSessionType;
 const { getOrCreateConfessionConfig } = ConfessionConfig;
@@ -80,7 +83,7 @@ class ConfessionsService {
     }
 
     const attendee = await User.findById(resolvedAttendeeUserId)
-      .select('fullName phonePrimary avatar role confessionFatherUserId')
+      .select('fullName phonePrimary avatar role confessionFatherUserId hasLogin')
       .lean();
 
     if (!attendee) {
@@ -113,6 +116,65 @@ class ConfessionsService {
       ...actor,
       isChurchPriest: Boolean(isChurchPriest),
     };
+  }
+
+  async _buildNextSessionNotificationPayload({ session, sessionType, recordingActor }) {
+    const creatorName = String(recordingActor?.fullName || '').trim();
+    const renderedTemplate = await platformSettingsService.renderConfessionNextSessionNotification({
+      creatorName,
+      nextSessionAt: session?.nextSessionAt || null,
+      sessionTypeName: sessionType?.name || '',
+    });
+
+    return {
+      type: 'confession_next_session',
+      title: renderedTemplate.title,
+      message: renderedTemplate.message,
+      link: '/dashboard/notifications/inbox',
+      metadata: {
+        confessionSessionId: String(session._id),
+        sessionTypeId: String(sessionType?._id || ''),
+        sessionTypeName: sessionType?.name || '',
+        scheduledAt: session.scheduledAt || null,
+        nextSessionAt: session.nextSessionAt || null,
+        createdByUserId: recordingActor?._id ? String(recordingActor._id) : null,
+        createdByName: creatorName,
+        localizedContent: renderedTemplate.localized,
+      },
+    };
+  }
+
+  async _notifyAttendeeAboutNextSession({
+    attendee,
+    session,
+    sessionType,
+    recordingActor,
+    actorUserId,
+  }) {
+    if (!session?.nextSessionAt || attendee?.hasLogin !== true) {
+      return null;
+    }
+
+    try {
+      const payload = await this._buildNextSessionNotificationPayload({
+        session,
+        sessionType,
+        recordingActor,
+      });
+
+      return await userNotificationsService.notifyUser(
+        attendee._id,
+        payload,
+        { createdBy: actorUserId }
+      );
+    } catch (error) {
+      logger.warn('Failed to create confession next session notification', {
+        attendeeUserId: String(attendee?._id || ''),
+        confessionSessionId: String(session?._id || ''),
+        reason: error.message,
+      });
+      return null;
+    }
   }
 
   async _buildAlerts({ thresholdDays, fullName }) {
@@ -283,6 +345,13 @@ class ConfessionsService {
     }
 
     await User.findByIdAndUpdate(attendee._id, attendeeUpdate);
+    await this._notifyAttendeeAboutNextSession({
+      attendee,
+      session,
+      sessionType,
+      recordingActor,
+      actorUserId,
+    });
 
     const populated = await ConfessionSession.findById(session._id)
       .populate('attendeeUserId', 'fullName phonePrimary avatar role')
