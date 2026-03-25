@@ -1,8 +1,14 @@
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
 const { buildPaginationMeta } = require('../../utils/pagination');
+const logger = require('../../utils/logger');
+const { getEffectivePermissions } = require('../../constants/permissions');
 const Notification = require('./notification.model');
 const NotificationType = require('./notificationType.model');
+const PushSubscription = require('./pushSubscription.model');
+const pushService = require('./push.service');
+const User = require('../users/user.model');
+const platformSettingsService = require('../settings/platformSettings.service');
 const { PERMISSIONS } = require('../../constants/permissions');
 const {
   uploadBufferToCloudinary,
@@ -138,6 +144,162 @@ class NotificationsService {
         : null,
       createdAt: notification.createdAt,
       updatedAt: notification.updatedAt,
+    };
+  }
+
+  _extractPushMessage(notification = {}) {
+    const summary = String(notification.summary || '').trim();
+    if (summary) {
+      return summary.slice(0, 2000);
+    }
+
+    const details = Array.isArray(notification.details) ? notification.details : [];
+    const firstMeaningfulDetail = details.find((detail) => {
+      const content = String(detail?.content || '').trim();
+      const title = String(detail?.title || '').trim();
+      const url = String(detail?.url || '').trim();
+      return Boolean(content || title || url);
+    });
+
+    if (firstMeaningfulDetail) {
+      return String(
+        firstMeaningfulDetail.content
+        || firstMeaningfulDetail.title
+        || firstMeaningfulDetail.url
+        || ''
+      )
+        .trim()
+        .slice(0, 2000);
+    }
+
+    const typeName = String(notification?.type?.name || notification?.typeNameSnapshot || '').trim();
+    if (typeName) {
+      return typeName.slice(0, 2000);
+    }
+
+    return String(notification.name || '').trim().slice(0, 2000);
+  }
+
+  async _buildPushNotificationPayload(notification = {}) {
+    const notificationId = String(notification.id || notification._id || '').trim();
+    const notificationName = String(notification.name || '').trim();
+    const typeName = String(notification?.type?.name || notification?.typeNameSnapshot || '').trim();
+    const fallbackMessage = this._extractPushMessage(notification);
+    const renderedTemplate = await platformSettingsService.renderDashboardNotificationPublishedNotification({
+      notificationName,
+      notificationSummary: fallbackMessage,
+      notificationTypeName: typeName,
+      eventDate: notification?.eventDate || null,
+    });
+
+    return {
+      id: notificationId || `content-${Date.now()}`,
+      type: 'content_notification',
+      title: String(renderedTemplate?.title || notificationName || typeName || 'Notification')
+        .trim()
+        .slice(0, 160),
+      message: String(renderedTemplate?.message || fallbackMessage || notificationName)
+        .trim()
+        .slice(0, 2000),
+      link: notificationId ? `/dashboard/notifications/${notificationId}` : '/dashboard/notifications',
+    };
+  }
+
+  _canReceiveAudienceNotification(user = {}, audience = {}) {
+    const audienceType = String(audience?.audienceType || 'all').trim().toLowerCase();
+    if (audienceType !== 'permissions') {
+      return true;
+    }
+
+    const requiredPermissions = Array.isArray(audience?.audiencePermissions)
+      ? audience.audiencePermissions
+      : [];
+    if (!requiredPermissions.length) {
+      return true;
+    }
+
+    const effectivePermissions = getEffectivePermissions(
+      user.role,
+      user.extraPermissions || [],
+      user.deniedPermissions || []
+    );
+    const permissionSet = new Set(effectivePermissions);
+
+    return requiredPermissions.some((permission) => permissionSet.has(permission));
+  }
+
+  async _sendPushToAudience(notification = {}) {
+    if (!pushService.isEnabled() || notification?.isActive === false) {
+      return {
+        eligibleUserCount: 0,
+        deliveredUserCount: 0,
+        deviceDeliveryCount: 0,
+        skipped: true,
+      };
+    }
+
+    const subscribedUserIds = await PushSubscription.distinct('userId');
+    if (!subscribedUserIds.length) {
+      return {
+        eligibleUserCount: 0,
+        deliveredUserCount: 0,
+        deviceDeliveryCount: 0,
+        skipped: true,
+      };
+    }
+
+    const subscribedUsers = await User.find({
+      _id: { $in: subscribedUserIds },
+      isDeleted: { $ne: true },
+      hasLogin: true,
+      isLocked: { $ne: true },
+    })
+      .select('_id role extraPermissions deniedPermissions')
+      .lean();
+
+    const eligibleUsers = subscribedUsers.filter((user) =>
+      this._canReceiveAudienceNotification(user, notification)
+    );
+
+    if (!eligibleUsers.length) {
+      return {
+        eligibleUserCount: 0,
+        deliveredUserCount: 0,
+        deviceDeliveryCount: 0,
+        skipped: true,
+      };
+    }
+
+    const pushPayload = await this._buildPushNotificationPayload(notification);
+    const results = await Promise.allSettled(
+      eligibleUsers.map((user) => pushService.sendToUser(user._id, pushPayload))
+    );
+
+    let deliveredUserCount = 0;
+    let deviceDeliveryCount = 0;
+
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        const sentCount = Number(result.value?.sentCount || 0);
+        if (sentCount > 0) {
+          deliveredUserCount += 1;
+          deviceDeliveryCount += sentCount;
+        }
+        return;
+      }
+
+      logger.warn('Failed to send content notification push to subscribed user', {
+        notificationId: String(notification.id || notification._id || ''),
+        userId: String(eligibleUsers[index]?._id || ''),
+        reason: result.reason?.message || 'Push delivery failed',
+      });
+    });
+
+    return {
+      eligibleUserCount: eligibleUsers.length,
+      deliveredUserCount,
+      deviceDeliveryCount,
+      skipped: false,
     };
   }
 
@@ -289,14 +451,32 @@ class NotificationsService {
       createdBy: actorUserId,
       updatedBy: actorUserId,
     });
-
-    return this._mapNotification(
+    const mappedNotification = this._mapNotification(
       await Notification.findById(created._id)
         .populate('typeId', 'name')
         .populate('createdBy', 'fullName')
         .populate('updatedBy', 'fullName')
         .lean()
     );
+
+    try {
+      const pushSummary = await this._sendPushToAudience(mappedNotification);
+      if (!pushSummary.skipped) {
+        logger.info('Content notification push broadcast completed', {
+          notificationId: String(mappedNotification.id || ''),
+          eligibleUserCount: pushSummary.eligibleUserCount,
+          deliveredUserCount: pushSummary.deliveredUserCount,
+          deviceDeliveryCount: pushSummary.deviceDeliveryCount,
+        });
+      }
+    } catch (error) {
+      logger.warn('Failed to broadcast content notification push', {
+        notificationId: String(mappedNotification.id || ''),
+        reason: error.message,
+      });
+    }
+
+    return mappedNotification;
   }
 
   async getNotificationById(id, userPermissions = []) {

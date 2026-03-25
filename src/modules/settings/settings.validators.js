@@ -10,13 +10,17 @@ const localizedMessageSchema = Joi.object({
   en: Joi.string().trim().max(2000).allow('').default(''),
 }).required();
 
+const notificationTemplateSchema = Joi.object({
+  title: localizedTitleSchema,
+  message: localizedMessageSchema,
+}).required();
+
 const updatePlatformSettings = {
   body: Joi.object({
     notificationTemplates: Joi.object({
-      confessionNextSession: Joi.object({
-        title: localizedTitleSchema,
-        message: localizedMessageSchema,
-      }).default(),
+      confessionNextSession: notificationTemplateSchema,
+      dashboardNotificationPublished: notificationTemplateSchema,
+      divineLiturgyExceptionalCase: notificationTemplateSchema,
     }).required(),
   }).required(),
 };

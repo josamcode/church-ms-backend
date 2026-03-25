@@ -3,8 +3,11 @@ const ApiError = require('../../utils/ApiError');
 const redisClient = require('../../config/redis');
 const { CACHE_KEYS } = require('../../constants/cacheKeys');
 const { PERMISSIONS } = require('../../constants/permissions');
+const logger = require('../../utils/logger');
 const User = require('../users/user.model');
 const Meeting = require('../meetings/meeting.model');
+const userNotificationsService = require('../notifications/userNotifications.service');
+const platformSettingsService = require('../settings/platformSettings.service');
 const ChurchPriest = require('./churchPriest.model');
 const DivineLiturgyAttendance = require('./divineLiturgyAttendance.model');
 const DivineLiturgyRecurring = require('./divineLiturgyRecurring.model');
@@ -133,6 +136,15 @@ class DivineLiturgiesService {
         PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE_ASSIGNED_USERS
       )
     );
+  }
+
+  _getDivineLiturgyNotificationPermissions() {
+    return [
+      PERMISSIONS.DIVINE_LITURGIES_VIEW,
+      PERMISSIONS.DIVINE_LITURGIES_MANAGE,
+      PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE,
+      PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE_ASSIGNED_USERS,
+    ];
   }
 
   _normalizeUniqueStrings(values = []) {
@@ -396,6 +408,51 @@ class DivineLiturgiesService {
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,
     };
+  }
+
+  async _buildExceptionNotificationPayload(exception) {
+    const exceptionName = this._normalizeText(exception?.displayName || exception?.name);
+    const renderedTemplate =
+      await platformSettingsService.renderDivineLiturgyExceptionalCaseNotification({
+        exceptionName,
+        exceptionDate: exception?.date || null,
+        startTime: exception?.startTime || '',
+        endTime: exception?.endTime || '',
+      });
+
+    return {
+      type: 'divine_liturgy_exception',
+      title: renderedTemplate.title,
+      message: renderedTemplate.message,
+      link: '/dashboard/divine-liturgies',
+      metadata: {
+        exceptionId: this._toId(exception?.id || exception?._id),
+        exceptionName,
+        exceptionDate: exception?.date || null,
+        startTime: exception?.startTime || '',
+        endTime: exception?.endTime || '',
+        localizedContent: renderedTemplate.localized,
+      },
+    };
+  }
+
+  async _notifyUsersAboutException(exception, actorUserId) {
+    try {
+      const payload = await this._buildExceptionNotificationPayload(exception);
+      return await userNotificationsService.notifyUsersWithAnyPermissions(
+        this._getDivineLiturgyNotificationPermissions(),
+        payload,
+        { createdBy: actorUserId }
+      );
+    } catch (error) {
+      logger.warn('Failed to create exceptional divine liturgy notification', {
+        exceptionId: this._toId(exception?.id || exception?._id),
+        reason: error.message,
+      });
+      return {
+        recipientCount: 0,
+      };
+    }
   }
 
   _mapAttendanceService(entryType, entry) {
@@ -985,7 +1042,9 @@ class DivineLiturgiesService {
     });
 
     const loaded = await this._loadExceptionById(exception._id);
-    return this._mapException(loaded);
+    const mappedException = this._mapException(loaded);
+    await this._notifyUsersAboutException(mappedException, actorUserId);
+    return mappedException;
   }
 
   async updateException(id, payload, actorUserId) {

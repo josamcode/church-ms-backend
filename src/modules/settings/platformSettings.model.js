@@ -46,6 +46,32 @@ const platformSettingsSchema = new mongoose.Schema(
           },
         }),
       },
+      dashboardNotificationPublished: {
+        type: notificationTemplateSchema,
+        default: () => ({
+          title: {
+            ar: 'إشعار جديد',
+            en: 'إشعار جديد',
+          },
+          message: {
+            ar: 'تم نشر إشعار جديد بعنوان {notificationName}.',
+            en: 'تم نشر إشعار جديد بعنوان {notificationName}.',
+          },
+        }),
+      },
+      divineLiturgyExceptionalCase: {
+        type: notificationTemplateSchema,
+        default: () => ({
+          title: {
+            ar: 'قداس استثنائي جديد',
+            en: 'قداس استثنائي جديد',
+          },
+          message: {
+            ar: 'تمت إضافة حالة قداس استثنائية بتاريخ {exceptionDate} في {startTime}.',
+            en: 'تمت إضافة حالة قداس استثنائية بتاريخ {exceptionDate} في {startTime}.',
+          },
+        }),
+      },
     },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
