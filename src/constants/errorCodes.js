@@ -2,12 +2,22 @@ const ERROR_CODES = Object.freeze({
   // المصادقة
   AUTH_INVALID_CREDENTIALS: {
     code: 'AUTH_INVALID_CREDENTIALS',
-    message: 'بيانات الدخول غير صحيحة',
+    message: 'بيانات تسجيل الدخول غير صحيحة',
     statusCode: 401,
   },
   AUTH_ACCOUNT_LOCKED: {
     code: 'AUTH_ACCOUNT_LOCKED',
     message: 'الحساب مغلق. يرجى التواصل مع المسؤول',
+    statusCode: 403,
+  },
+  AUTH_ACCOUNT_PENDING: {
+    code: 'AUTH_ACCOUNT_PENDING',
+    message: 'طلب تسجيل الحساب ما زال قيد المراجعة',
+    statusCode: 403,
+  },
+  AUTH_ACCOUNT_REJECTED: {
+    code: 'AUTH_ACCOUNT_REJECTED',
+    message: 'تم رفض طلب تسجيل الحساب',
     statusCode: 403,
   },
   AUTH_NO_LOGIN_ACCESS: {
@@ -32,7 +42,7 @@ const ERROR_CODES = Object.freeze({
   },
   AUTH_SESSION_INVALIDATED: {
     code: 'AUTH_SESSION_INVALIDATED',
-    message: 'تم تحديث صلاحيات هذا الحساب. يرجى تسجيل الدخول مرة أخرى',
+    message: 'تم إنهاء جلسات هذا الحساب. يرجى تسجيل الدخول مرة أخرى',
     statusCode: 401,
   },
   AUTH_REFRESH_TOKEN_INVALID: {
@@ -42,8 +52,13 @@ const ERROR_CODES = Object.freeze({
   },
   AUTH_UNAUTHORIZED: {
     code: 'AUTH_UNAUTHORIZED',
-    message: 'يجب تسجيل الدخول أولاً',
+    message: 'يجب تسجيل الدخول أولًا',
     statusCode: 401,
+  },
+  AUTH_REGISTRATION_DISABLED: {
+    code: 'AUTH_REGISTRATION_DISABLED',
+    message: 'تسجيل الحسابات الجديدة غير متاح حاليًا',
+    statusCode: 403,
   },
 
   // التحقق من البيانات
@@ -75,29 +90,29 @@ const ERROR_CODES = Object.freeze({
   // التكرار
   DUPLICATE_VALUE: {
     code: 'DUPLICATE_VALUE',
-    message: 'القيمة مكررة وموجودة مسبقاً',
+    message: 'القيمة المدخلة مسجلة مسبقًا',
     statusCode: 409,
   },
   DUPLICATE_PHONE: {
     code: 'DUPLICATE_PHONE',
-    message: 'رقم الهاتف مسجل مسبقاً',
+    message: 'رقم الهاتف مسجل مسبقًا',
     statusCode: 409,
   },
   DUPLICATE_EMAIL: {
     code: 'DUPLICATE_EMAIL',
-    message: 'البريد الإلكتروني مسجل مسبقاً',
+    message: 'البريد الإلكتروني مسجل مسبقًا',
     statusCode: 409,
   },
   DUPLICATE_NATIONAL_ID: {
     code: 'DUPLICATE_NATIONAL_ID',
-    message: 'الرقم القومي مسجل مسبقاً',
+    message: 'الرقم القومي مسجل مسبقًا',
     statusCode: 409,
   },
 
-  // تحديد المعدل
+  // معدل الطلبات
   RATE_LIMITED: {
     code: 'RATE_LIMITED',
-    message: 'تم تجاوز الحد المسموح به من الطلبات. يرجى المحاولة لاحقاً',
+    message: 'تم تجاوز الحد المسموح من الطلبات. يرجى المحاولة لاحقًا',
     statusCode: 429,
   },
 
@@ -121,7 +136,7 @@ const ERROR_CODES = Object.freeze({
   // أخطاء الخادم
   INTERNAL_ERROR: {
     code: 'INTERNAL_ERROR',
-    message: 'خطأ داخلي في الخادم',
+    message: 'حدث خطأ داخلي في الخادم',
     statusCode: 500,
   },
 });

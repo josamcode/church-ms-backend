@@ -3,6 +3,7 @@ const config = require('../config/env');
 const ApiError = require('../utils/ApiError');
 const redisClient = require('../config/redis');
 const { CACHE_KEYS } = require('../constants/cacheKeys');
+const { ACCOUNT_STATUSES } = require('../constants/accountStatuses');
 const User = require('../modules/users/user.model');
 
 const authenticateJWT = async (req, res, next) => {
@@ -47,7 +48,7 @@ const authenticateJWT = async (req, res, next) => {
     }
 
     const user = await User.findById(decoded.sub)
-      .select('authVersion isDeleted')
+      .select('authVersion isDeleted isLocked lockReason hasLogin accountStatus')
       .lean();
 
     if (!user || user.isDeleted) {
@@ -58,6 +59,32 @@ const authenticateJWT = async (req, res, next) => {
       throw ApiError.unauthorized(
         'This session has been invalidated. Please sign in again.',
         'AUTH_SESSION_INVALIDATED'
+      );
+    }
+
+    const accountStatus = user.accountStatus || ACCOUNT_STATUSES.APPROVED;
+    if (accountStatus === ACCOUNT_STATUSES.PENDING) {
+      throw ApiError.forbidden(
+        'Your registration request is still pending approval. Please wait for an administrator to review it.',
+        'AUTH_ACCOUNT_PENDING'
+      );
+    }
+    if (accountStatus === ACCOUNT_STATUSES.REJECTED) {
+      throw ApiError.forbidden(
+        'Your registration request was rejected. Please contact an administrator for help.',
+        'AUTH_ACCOUNT_REJECTED'
+      );
+    }
+    if (!user.hasLogin) {
+      throw ApiError.forbidden(
+        'This account does not currently have permission to sign in.',
+        'AUTH_NO_LOGIN_ACCESS'
+      );
+    }
+    if (user.isLocked) {
+      throw ApiError.forbidden(
+        `This account is locked: ${user.lockReason || 'Please contact an administrator'}`,
+        'AUTH_ACCOUNT_LOCKED'
       );
     }
 

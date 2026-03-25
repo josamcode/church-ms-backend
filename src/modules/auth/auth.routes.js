@@ -17,6 +17,11 @@ router.post(
   authController.register
 );
 
+router.get(
+  '/register/options',
+  authController.getRegistrationOptions
+);
+
 router.post(
   '/login',
   authLimiter,

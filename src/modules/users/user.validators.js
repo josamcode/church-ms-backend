@@ -3,6 +3,7 @@ const { ROLES_ARRAY } = require('../../constants/roles');
 const { AGE_GROUPS_ARRAY } = require('../../constants/ageGroups');
 const { LOCK_REASONS_ARRAY } = require('../../constants/lockReasons');
 const { PERMISSIONS_ARRAY } = require('../../constants/permissions');
+const { ACCOUNT_STATUSES_ARRAY } = require('../../constants/accountStatuses');
 const {
   EMPLOYMENT_STATUSES_ARRAY,
   PRESENCE_STATUSES_ARRAY,
@@ -139,6 +140,7 @@ const createUser = {
     role: Joi.string().valid(...ROLES_ARRAY).optional().messages({
       'any.only': 'الدور غير صالح',
     }),
+    accountStatus: Joi.string().valid(...ACCOUNT_STATUSES_ARRAY).optional(),
     password: Joi.string().pattern(PASSWORD_PATTERN).optional().messages({
       'string.pattern.base':
         'كلمة المرور يجب أن تحتوي على 8 أحرف على الأقل وتشمل حرف كبير وحرف صغير ورقم ورمز خاص',
@@ -185,6 +187,7 @@ const updateUser = {
     familyName: Joi.string().trim().allow(null, '').optional(),
     houseName: Joi.string().trim().allow(null, '').optional(),
     role: Joi.string().valid(...ROLES_ARRAY).optional(),
+    accountStatus: Joi.string().valid(...ACCOUNT_STATUSES_ARRAY).optional(),
     hasLogin: Joi.boolean().optional(),
     password: Joi.string().pattern(PASSWORD_PATTERN).optional().messages({
       'string.pattern.base':
@@ -236,6 +239,7 @@ const listUsers = {
       .try(Joi.array().items(Joi.string()), Joi.string())
       .optional(),
     role: Joi.string().valid(...ROLES_ARRAY).optional(),
+    accountStatus: Joi.string().valid(...ACCOUNT_STATUSES_ARRAY).optional(),
     familyName: Joi.string().trim().optional(),
     houseName: Joi.string().trim().optional(),
     gender: Joi.string().valid('male', 'female', 'other').optional(),

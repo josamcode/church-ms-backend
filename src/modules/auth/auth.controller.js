@@ -1,6 +1,7 @@
 const asyncHandler = require('../../utils/asyncHandler');
 const authService = require('./auth.service');
 const ApiResponse = require('../../utils/apiResponse');
+const userService = require('../users/user.service');
 
 const register = asyncHandler(async (req, res) => {
   const result = await authService.register(req.body);
@@ -13,6 +14,27 @@ const register = asyncHandler(async (req, res) => {
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
       requiresApproval: Boolean(result.requiresApproval),
+    },
+  });
+});
+
+const getRegistrationOptions = asyncHandler(async (_req, res) => {
+  const [familyNames, houseNames, profileOptionValues] = await Promise.all([
+    userService.getFamilyNames(),
+    userService.getHouseNames(),
+    userService.getProfileOptionValues(),
+  ]);
+
+  return ApiResponse.success(res, {
+    message: 'Registration form options loaded successfully',
+    data: {
+      familyNames,
+      houseNames,
+      profileOptionValues: {
+        travelDestinations: profileOptionValues?.travelDestinations || [],
+        travelReasons: profileOptionValues?.travelReasons || [],
+        healthConditions: profileOptionValues?.healthConditions || [],
+      },
     },
   });
 });
@@ -76,6 +98,7 @@ const changePassword = asyncHandler(async (req, res) => {
 
 module.exports = {
   register,
+  getRegistrationOptions,
   login,
   refresh,
   logout,

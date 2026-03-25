@@ -10,6 +10,7 @@ const { CACHE_KEYS, CACHE_TTL } = require('../../constants/cacheKeys');
 const { filterAssignablePermissions } = require('../../constants/permissions');
 const { buildPaginationMeta } = require('../../utils/pagination');
 const { ROLES } = require('../../constants/roles');
+const { ACCOUNT_STATUSES } = require('../../constants/accountStatuses');
 const { SERVICE_TYPES } = require('../divineLiturgies/divineLiturgyRecurring.model');
 const logger = require('../../utils/logger');
 const cloudinary = require('../../config/cloudinary');
@@ -177,6 +178,9 @@ class UserService {
     }
 
     const userData = { ...preparedData, createdBy: createdByUserId };
+    if (!userData.accountStatus) {
+      userData.accountStatus = ACCOUNT_STATUSES.APPROVED;
+    }
     if (
       preparedData.avatar &&
       typeof preparedData.avatar === 'object' &&
@@ -231,6 +235,9 @@ class UserService {
     }
     if (filters.role) {
       query.role = filters.role;
+    }
+    if (filters.accountStatus) {
+      query.accountStatus = filters.accountStatus;
     }
     if (filters.familyName) {
       query.familyName = { $regex: filters.familyName, $options: 'i' };
@@ -743,7 +750,7 @@ class UserService {
       'fullName', 'gender', 'birthDate', 'nationalId', 'notes',
       'phonePrimary', 'phoneSecondary', 'whatsappNumber', 'email',
       'address', 'financial', 'employment', 'presence', 'education', 'health',
-      'tags', 'familyName', 'houseName', 'role', 'hasLogin', 'extraPermissions',
+      'tags', 'familyName', 'houseName', 'role', 'accountStatus', 'hasLogin', 'extraPermissions',
       'deniedPermissions', 'confessionFatherName', 'confessionFatherUserId',
       'avatar', 'customDetails',
       'father', 'mother', 'spouse', 'siblings', 'children', 'familyMembers',
@@ -751,7 +758,13 @@ class UserService {
 
     const changes = [];
     let shouldInvalidateSessions = false;
-    const authSensitiveFields = new Set(['role', 'hasLogin', 'extraPermissions', 'deniedPermissions']);
+    const authSensitiveFields = new Set([
+      'role',
+      'accountStatus',
+      'hasLogin',
+      'extraPermissions',
+      'deniedPermissions',
+    ]);
 
     for (const field of allowedFields) {
       if (preparedData[field] !== undefined) {

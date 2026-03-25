@@ -313,6 +313,10 @@ class PlatformSettingsService {
     return Math.max(0, Math.min(10080, Math.round(parsedValue)));
   }
 
+  _normalizeRegistrationEnabled(value, fallback = true) {
+    return typeof value === 'boolean' ? value : fallback;
+  }
+
   normalizeMeetingReminderLeadMinutes(value, fallback = 60) {
     return this._normalizeLeadMinutes(value, fallback);
   }
@@ -342,6 +346,7 @@ class PlatformSettingsService {
     return {
       notificationTemplates: this._normalizeNotificationTemplates(document?.notificationTemplates),
       meetingReminderLeadMinutes: this._normalizeLeadMinutes(document?.meetingReminderLeadMinutes, 60),
+      registrationEnabled: this._normalizeRegistrationEnabled(document?.registrationEnabled, true),
       availableTokens: this._cloneAvailableTokens(),
       createdAt: document?.createdAt || null,
       updatedAt: document?.updatedAt || null,
@@ -372,6 +377,11 @@ class PlatformSettingsService {
     return this._buildPayload(document);
   }
 
+  async isRegistrationEnabled() {
+    const document = await this._loadDocument();
+    return this._normalizeRegistrationEnabled(document?.registrationEnabled, true);
+  }
+
   async updateManageSettings(payload = {}, actorUserId) {
     const document = await this._ensureDocument();
 
@@ -379,6 +389,10 @@ class PlatformSettingsService {
     document.meetingReminderLeadMinutes = this._normalizeLeadMinutes(
       payload.meetingReminderLeadMinutes,
       document.meetingReminderLeadMinutes
+    );
+    document.registrationEnabled = this._normalizeRegistrationEnabled(
+      payload.registrationEnabled,
+      document.registrationEnabled
     );
     document.updatedBy = this._toObjectId(actorUserId, 'actorUserId');
 

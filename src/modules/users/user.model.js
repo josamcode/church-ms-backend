@@ -5,6 +5,10 @@ const { PERMISSIONS_ARRAY } = require('../../constants/permissions');
 const { AGE_GROUPS_ARRAY, getAgeGroup } = require('../../constants/ageGroups');
 const { LOCK_REASONS_ARRAY } = require('../../constants/lockReasons');
 const {
+  ACCOUNT_STATUSES,
+  ACCOUNT_STATUSES_ARRAY,
+} = require('../../constants/accountStatuses');
+const {
   EMPLOYMENT_STATUSES_ARRAY,
   PRESENCE_STATUSES,
   PRESENCE_STATUSES_ARRAY,
@@ -288,6 +292,11 @@ const userSchema = new mongoose.Schema(
     familyMembers: [familyMemberSchema],
 
     // ═══════ D) صلاحيات الدخول ═══════
+    accountStatus: {
+      type: String,
+      enum: ACCOUNT_STATUSES_ARRAY,
+      default: ACCOUNT_STATUSES.APPROVED,
+    },
     hasLogin: {
       type: Boolean,
       default: false,
@@ -399,11 +408,13 @@ userSchema.index({ fullName: 'text' });
 userSchema.index({ tags: 1 });
 userSchema.index({ ageGroup: 1 });
 userSchema.index({ role: 1 });
+userSchema.index({ accountStatus: 1 });
 userSchema.index({ isDeleted: 1, createdAt: -1 });
 userSchema.index({ isDeleted: 1, fullName: 1 });
 userSchema.index({ isDeleted: 1, ageGroup: 1 });
 userSchema.index({ isDeleted: 1, tags: 1 });
 userSchema.index({ isDeleted: 1, role: 1 });
+userSchema.index({ isDeleted: 1, accountStatus: 1, createdAt: -1 });
 userSchema.index({ 'employment.status': 1 });
 userSchema.index({ 'presence.status': 1 });
 userSchema.index({ 'education.stage': 1 });

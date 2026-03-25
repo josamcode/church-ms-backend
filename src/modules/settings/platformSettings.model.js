@@ -92,6 +92,10 @@ const platformSettingsSchema = new mongoose.Schema(
       max: 10080,
       default: 60,
     },
+    registrationEnabled: {
+      type: Boolean,
+      default: true,
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',

@@ -7,6 +7,8 @@ const User = require('../users/user.model');
 const ApiError = require('../../utils/ApiError');
 const { CACHE_KEYS, CACHE_TTL } = require('../../constants/cacheKeys');
 const { ROLES } = require('../../constants/roles');
+const { ACCOUNT_STATUSES } = require('../../constants/accountStatuses');
+const platformSettingsService = require('../settings/platformSettings.service');
 const logger = require('../../utils/logger');
 
 class AuthService {
@@ -58,6 +60,7 @@ class AuthService {
       },
       familyName: user?.familyName || '',
       houseName: user?.houseName || '',
+      accountStatus: user?.accountStatus || ACCOUNT_STATUSES.APPROVED,
       isLocked: Boolean(user?.isLocked),
       allowOthersToViewCreatedConfessionSessions:
         user?.allowOthersToViewCreatedConfessionSessions !== false,
@@ -78,6 +81,42 @@ class AuthService {
       await redisClient.del(CACHE_KEYS.USER_PERMISSIONS(userId));
     } catch (_error) {
       // Cache invalidation failure should not interrupt the main request path.
+    }
+  }
+
+  _getNormalizedAccountStatus(userLike) {
+    return userLike?.accountStatus || ACCOUNT_STATUSES.APPROVED;
+  }
+
+  _assertAccountCanAuthenticate(userLike, { requireLoginAccess = true } = {}) {
+    const accountStatus = this._getNormalizedAccountStatus(userLike);
+
+    if (accountStatus === ACCOUNT_STATUSES.PENDING) {
+      throw ApiError.forbidden(
+        'Your registration request is still pending approval. Please wait for an administrator to review it.',
+        'AUTH_ACCOUNT_PENDING'
+      );
+    }
+
+    if (accountStatus === ACCOUNT_STATUSES.REJECTED) {
+      throw ApiError.forbidden(
+        'Your registration request was rejected. Please contact an administrator for help.',
+        'AUTH_ACCOUNT_REJECTED'
+      );
+    }
+
+    if (requireLoginAccess && !userLike?.hasLogin) {
+      throw ApiError.forbidden(
+        'This account does not currently have permission to sign in.',
+        'AUTH_NO_LOGIN_ACCESS'
+      );
+    }
+
+    if (userLike?.isLocked) {
+      throw ApiError.forbidden(
+        `This account is locked: ${userLike.lockReason || 'Please contact an administrator'}`,
+        'AUTH_ACCOUNT_LOCKED'
+      );
     }
   }
 
@@ -111,9 +150,36 @@ class AuthService {
     }
   }
 
-  async register({ fullName, phonePrimary, email, password, birthDate, gender }) {
+  async register({
+    fullName,
+    phonePrimary,
+    email,
+    password,
+    birthDate,
+    gender,
+    nationalId,
+    phoneSecondary,
+    whatsappNumber,
+    notes,
+    familyName,
+    houseName,
+    address,
+    education,
+    employment,
+    presence,
+    health,
+  }) {
+    const registrationEnabled = await platformSettingsService.isRegistrationEnabled();
+    if (!registrationEnabled) {
+      throw ApiError.forbidden(
+        'New account registration is currently disabled. Please contact an administrator.',
+        'AUTH_REGISTRATION_DISABLED'
+      );
+    }
+
     const orConditions = [{ phonePrimary }];
     if (email) orConditions.push({ email });
+    if (nationalId) orConditions.push({ nationalId });
 
     const existingUser = await User.findOne({ $or: orConditions }).lean();
 
@@ -124,6 +190,9 @@ class AuthService {
       if (email && existingUser.email === email) {
         throw ApiError.conflict('Email address is already registered', 'DUPLICATE_EMAIL');
       }
+      if (nationalId && existingUser.nationalId === nationalId) {
+        throw ApiError.conflict('National ID is already registered', 'DUPLICATE_NATIONAL_ID');
+      }
     }
 
     const user = new User({
@@ -132,7 +201,19 @@ class AuthService {
       email: email || undefined,
       birthDate,
       gender,
-      hasLogin: false,
+      nationalId: nationalId || undefined,
+      phoneSecondary: phoneSecondary || undefined,
+      whatsappNumber: whatsappNumber || undefined,
+      notes: notes || undefined,
+      familyName: familyName || undefined,
+      houseName: houseName || undefined,
+      address: address || undefined,
+      education: education || undefined,
+      employment: employment || undefined,
+      presence: presence || undefined,
+      health: health || undefined,
+      accountStatus: ACCOUNT_STATUSES.PENDING,
+      hasLogin: true,
       loginIdentifierType: email ? 'email' : 'phone',
       passwordHash: password,
       role: ROLES.USER,
@@ -157,19 +238,7 @@ class AuthService {
       throw ApiError.unauthorized('Invalid credentials', 'AUTH_INVALID_CREDENTIALS');
     }
 
-    if (!user.hasLogin) {
-      throw ApiError.forbidden(
-        'This account is pending approval and cannot sign in yet',
-        'AUTH_NO_LOGIN_ACCESS'
-      );
-    }
-
-    if (user.isLocked) {
-      throw ApiError.forbidden(
-        `This account is locked: ${user.lockReason || 'Please contact an administrator'}`,
-        'AUTH_ACCOUNT_LOCKED'
-      );
-    }
+    this._assertAccountCanAuthenticate(user);
 
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
@@ -216,15 +285,12 @@ class AuthService {
 
     const { userId, authVersion: storedAuthVersion = 0 } = JSON.parse(stored);
 
-    const user = await User.findById(userId).select('role authVersion isLocked isDeleted');
+    const user = await User.findById(userId).select(
+      'role authVersion isLocked lockReason isDeleted hasLogin accountStatus'
+    );
     if (!user || user.isDeleted) {
       await redisClient.del(CACHE_KEYS.REFRESH_TOKEN(hash));
       throw ApiError.unauthorized('User account was not found', 'AUTH_REFRESH_TOKEN_INVALID');
-    }
-
-    if (user.isLocked) {
-      await redisClient.del(CACHE_KEYS.REFRESH_TOKEN(hash));
-      throw ApiError.forbidden('This account is locked', 'AUTH_ACCOUNT_LOCKED');
     }
 
     if (Number(user.authVersion || 0) !== Number(storedAuthVersion || 0)) {
@@ -233,6 +299,13 @@ class AuthService {
         'This session has been invalidated. Please sign in again.',
         'AUTH_SESSION_INVALIDATED'
       );
+    }
+
+    try {
+      this._assertAccountCanAuthenticate(user);
+    } catch (error) {
+      await redisClient.del(CACHE_KEYS.REFRESH_TOKEN(hash));
+      throw error;
     }
 
     try {
@@ -311,6 +384,7 @@ class AuthService {
         'address',
         'familyName',
         'houseName',
+        'accountStatus',
         'isLocked',
         'allowOthersToViewCreatedConfessionSessions',
         'allowOthersToViewCreatedChats',

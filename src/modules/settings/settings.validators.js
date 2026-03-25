@@ -24,6 +24,7 @@ const updatePlatformSettings = {
       divineLiturgyExceptionalCase: notificationTemplateSchema,
     }).required(),
     meetingReminderLeadMinutes: Joi.number().integer().min(0).max(10080).required(),
+    registrationEnabled: Joi.boolean().optional(),
   }).required(),
 };
 
