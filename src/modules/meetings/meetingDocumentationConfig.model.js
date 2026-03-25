@@ -86,4 +86,5 @@ async function getOrCreateMeetingDocumentationConfig() {
 
 module.exports = MeetingDocumentationConfig;
 module.exports.MEETING_DOCUMENTATION_FIELD_TYPES = MEETING_DOCUMENTATION_FIELD_TYPES;
+module.exports.meetingDocumentationFieldConfigSchema = meetingDocumentationFieldConfigSchema;
 module.exports.getOrCreateMeetingDocumentationConfig = getOrCreateMeetingDocumentationConfig;

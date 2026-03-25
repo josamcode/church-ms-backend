@@ -150,9 +150,10 @@ const updateMeetingAttendance = asyncHandler(async (req, res) => {
 });
 
 const getMeetingDocumentationSettings = asyncHandler(async (req, res) => {
-  const settings = await meetingsService.getMeetingDocumentationSettings({
+  const settings = await meetingsService.getMeetingDocumentationSettings(req.params.id, {
+    actorUserId: req.user.id,
     userPermissions: req.userPermissions || [],
-    includeInactive: req.query.includeInactive !== 'false',
+    includeInactive: req.query.includeInactive !== false && req.query.includeInactive !== 'false',
   });
 
   return ApiResponse.success(res, {
@@ -162,7 +163,7 @@ const getMeetingDocumentationSettings = asyncHandler(async (req, res) => {
 });
 
 const updateMeetingDocumentationSettings = asyncHandler(async (req, res) => {
-  const settings = await meetingsService.updateMeetingDocumentationSettings(req.body.fields, {
+  const settings = await meetingsService.updateMeetingDocumentationSettings(req.params.id, req.body.fields, {
     actorUserId: req.user.id,
     userPermissions: req.userPermissions || [],
   });
@@ -258,6 +259,29 @@ const updateMeetingActivities = asyncHandler(async (req, res) => {
   });
 });
 
+const listMeetingReminderSettings = asyncHandler(async (_req, res) => {
+  const meetings = await meetingsService.listMeetingReminderSettings();
+  return ApiResponse.success(res, {
+    message: 'Meeting reminder settings loaded successfully',
+    data: meetings,
+  });
+});
+
+const updateMeetingReminderSettings = asyncHandler(async (req, res) => {
+  const meeting = await meetingsService.updateMeetingReminderSettings(
+    req.params.id,
+    req.body,
+    {
+      actorUserId: req.user.id,
+      userPermissions: req.userPermissions || [],
+    }
+  );
+  return ApiResponse.success(res, {
+    message: 'Meeting reminder settings updated successfully',
+    data: meeting,
+  });
+});
+
 const deleteMeeting = asyncHandler(async (req, res) => {
   await meetingsService.deleteMeeting(req.params.id, req.user.id);
   return ApiResponse.success(res, {
@@ -323,6 +347,8 @@ module.exports = {
   updateMeetingServants,
   updateMeetingCommittees,
   updateMeetingActivities,
+  listMeetingReminderSettings,
+  updateMeetingReminderSettings,
   deleteMeeting,
   listResponsibilitySuggestions,
   getServantHistory,

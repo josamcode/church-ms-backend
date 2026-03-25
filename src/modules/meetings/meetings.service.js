@@ -8,6 +8,10 @@ const logger = require('../../utils/logger');
 const User = require('../users/user.model');
 const Sector = require('./sector.model');
 const Meeting = require('./meeting.model');
+const {
+  DEFAULT_MEETING_REMINDER_TEMPLATE,
+  DEFAULT_MEETING_REMINDER_LEAD_MINUTES,
+} = require('./meeting.model');
 const MeetingResponsibility = require('./meetingResponsibility.model');
 const MeetingDocumentation = require('./meetingDocumentation.model');
 const {
@@ -17,6 +21,7 @@ const {
   MEETING_DOCUMENTATION_FIELD_TYPES,
   getOrCreateMeetingDocumentationConfig,
 } = require('./meetingDocumentationConfig.model');
+const platformSettingsService = require('../settings/platformSettings.service');
 const {
   uploadBufferToCloudinary,
   validateDocumentationUpload,
@@ -121,6 +126,41 @@ class MeetingsService {
 
   _hasAnyPermission(permissions = [], requiredPermissions = []) {
     return (requiredPermissions || []).some((permission) => this._hasPermission(permissions, permission));
+  }
+
+  _normalizeMeetingReminderSettings(value = {}) {
+    return {
+      leadMinutes: platformSettingsService.normalizeMeetingReminderLeadMinutes(
+        value?.leadMinutes,
+        DEFAULT_MEETING_REMINDER_LEAD_MINUTES
+      ),
+      template: platformSettingsService.normalizeMeetingReminderTemplate(value?.template),
+    };
+  }
+
+  _mapMeetingReminderSettings(value = {}) {
+    const normalized = this._normalizeMeetingReminderSettings(value);
+
+    return {
+      leadMinutes: normalized.leadMinutes,
+      template: {
+        title: {
+          ar: normalized.template?.title?.ar || DEFAULT_MEETING_REMINDER_TEMPLATE.title.ar,
+          en: normalized.template?.title?.en || normalized.template?.title?.ar || DEFAULT_MEETING_REMINDER_TEMPLATE.title.en,
+        },
+        message: {
+          ar: normalized.template?.message?.ar || DEFAULT_MEETING_REMINDER_TEMPLATE.message.ar,
+          en:
+            normalized.template?.message?.en
+            || normalized.template?.message?.ar
+            || DEFAULT_MEETING_REMINDER_TEMPLATE.message.en,
+        },
+      },
+    };
+  }
+
+  _canManageMeetingReminderSettings(accessContext) {
+    return accessContext?.allowed && accessContext?.accessLevel === 'full';
   }
 
   async _clearUserCaches(userIds = []) {
@@ -675,6 +715,7 @@ class MeetingsService {
       groupAssignments,
       committees,
       activities,
+      reminderSettings: this._mapMeetingReminderSettings(meeting.reminderSettings),
       notes: meeting.notes || '',
       createdAt: meeting.createdAt,
       updatedAt: meeting.updatedAt,
@@ -756,6 +797,8 @@ class MeetingsService {
         canViewServants: false,
         canViewCommittees: false,
         canViewActivities: false,
+        canManageReminderSettings: false,
+        canManageDocumentationSettings: false,
       },
     };
   }
@@ -840,6 +883,8 @@ class MeetingsService {
         canViewServants: true,
         canViewCommittees: true,
         canViewActivities: true,
+        canManageReminderSettings: false,
+        canManageDocumentationSettings: false,
       },
     };
   }
@@ -863,6 +908,8 @@ class MeetingsService {
         canViewServants: true,
         canViewCommittees: true,
         canViewActivities: true,
+        canManageReminderSettings: this._canManageMeetingReminderSettings(accessContext),
+        canManageDocumentationSettings: this._canManageMeetingDocumentationSettings(accessContext),
       },
     };
   }
@@ -1380,6 +1427,63 @@ class MeetingsService {
     return this._mapMeetingByAccess(meeting, accessContext);
   }
 
+  async listMeetingReminderSettings() {
+    const meetings = await Meeting.find({ isDeleted: { $ne: true } })
+      .sort({ day: 1, time: 1, name: 1, _id: 1 })
+      .select('_id name day time sectorId reminderSettings updatedAt createdAt')
+      .populate('sectorId', 'name avatar')
+      .lean();
+
+    return meetings.map((meeting) => ({
+      id: this._toId(meeting._id),
+      name: meeting.name,
+      day: meeting.day,
+      time: meeting.time,
+      sector: meeting.sectorId
+        ? {
+            id: this._toId(meeting.sectorId._id || meeting.sectorId),
+            name: meeting.sectorId.name || null,
+            avatar: meeting.sectorId.avatar || null,
+          }
+        : null,
+      reminderSettings: this._mapMeetingReminderSettings(meeting.reminderSettings),
+      createdAt: meeting.createdAt || null,
+      updatedAt: meeting.updatedAt || null,
+    }));
+  }
+
+  async updateMeetingReminderSettings(
+    id,
+    payload,
+    { actorUserId = null, userPermissions = [] } = {}
+  ) {
+    const meeting = await Meeting.findOne({ _id: this._toObjectId(id), isDeleted: { $ne: true } });
+    if (!meeting) {
+      throw ApiError.notFound('Meeting was not found', 'RESOURCE_NOT_FOUND');
+    }
+
+    const accessContext = this._resolveMeetingAccess({
+      meeting,
+      actorUserId,
+      userPermissions,
+    });
+    if (!this._canManageMeetingReminderSettings(accessContext)) {
+      throw ApiError.forbidden(
+        'You are not allowed to update this meeting reminder settings',
+        'PERMISSION_DENIED'
+      );
+    }
+
+    meeting.reminderSettings = this._normalizeMeetingReminderSettings(payload);
+    meeting.updatedBy = actorUserId;
+    await meeting.save();
+
+    return this.getMeetingById(meeting._id, {
+      actorUserId,
+      userPermissions,
+    });
+  }
+
   _mapMeetingMember({
     user,
     meetingId,
@@ -1432,7 +1536,7 @@ class MeetingsService {
       _id: this._toObjectId(meetingId),
       isDeleted: { $ne: true },
     }).select(
-      'name day time createdAt groups serviceSecretary assistantSecretaries servants servedUserIds groupAssignments attendanceRecords attendanceAuditLog updatedBy'
+      'name day time createdAt groups serviceSecretary assistantSecretaries servants servedUserIds groupAssignments attendanceRecords attendanceAuditLog documentationSettings updatedBy'
     );
     if (lean) query = query.lean();
 
@@ -1515,11 +1619,8 @@ class MeetingsService {
     );
   }
 
-  _canManageMeetingDocumentationSettings(userPermissions = []) {
-    return (
-      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_SETTINGS_MANAGE) ||
-      this._hasPermission(userPermissions, PERMISSIONS.MEETINGS_UPDATE)
-    );
+  _canManageMeetingDocumentationSettings(accessContext) {
+    return accessContext?.allowed && accessContext?.accessLevel === 'full';
   }
 
   _extractMeetingMemberNotes(meeting, memberId) {
@@ -1749,6 +1850,29 @@ class MeetingsService {
     });
   }
 
+  async _resolveMeetingDocumentationSettingsSource(meeting) {
+    const hasMeetingCustomization =
+      meeting?.documentationSettings?.isCustomized === true ||
+      Array.isArray(meeting?.documentationSettings?.fields) && meeting.documentationSettings.fields.length > 0;
+
+    if (hasMeetingCustomization) {
+      return {
+        fields: meeting?.documentationSettings?.fields || [],
+        updatedAt: meeting?.documentationSettings?.updatedAt || null,
+        updatedBy: this._toId(meeting?.documentationSettings?.updatedBy),
+        isCustomized: true,
+      };
+    }
+
+    const config = await getOrCreateMeetingDocumentationConfig();
+    return {
+      fields: config?.fields || [],
+      updatedAt: config?.updatedAt || null,
+      updatedBy: this._toId(config?.updatedBy),
+      isCustomized: false,
+    };
+  }
+
   _normalizeMeetingDocumentationAssets(assets = [], expectedKind = null) {
     return [...new Map(
       (assets || []).map((asset) => {
@@ -1866,44 +1990,83 @@ class MeetingsService {
     };
   }
 
-  async getMeetingDocumentationSettings({ userPermissions = [], includeInactive = true } = {}) {
-    if (!this._canManageMeetingDocumentation(userPermissions) &&
-        !this._canManageMeetingDocumentationSettings(userPermissions)) {
-      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+  async getMeetingDocumentationSettings(
+    meetingId,
+    { actorUserId, userPermissions = [], includeInactive = true } = {}
+  ) {
+    const meeting = await this._getMeetingForAttendance(meetingId);
+    const accessContext = this._resolveMeetingAccess({
+      meeting,
+      actorUserId,
+      userPermissions,
+    });
+
+    if (!accessContext.allowed) {
+      throw ApiError.forbidden('You are not allowed to access this meeting', 'PERMISSION_DENIED');
+    }
+    if (!this._canManageMeetingDocumentationSettings(accessContext)) {
+      throw ApiError.forbidden(
+        'You are not allowed to manage meeting documentation settings',
+        'PERMISSION_DENIED'
+      );
     }
 
-    const config = await getOrCreateMeetingDocumentationConfig();
-    const updatedById = this._toId(config?.updatedBy);
+    const settingsSource = await this._resolveMeetingDocumentationSettingsSource(meeting);
+    const updatedById = this._toId(settingsSource?.updatedBy);
     const usersMap = updatedById ? await this._buildUserMap([updatedById]) : new Map();
     const updatedByUser = updatedById ? usersMap.get(updatedById) : null;
-    const fields = (config.fields || [])
+    const fields = (settingsSource.fields || [])
       .map((field) => this._mapMeetingDocumentationSettingsField(field))
       .filter((field) => includeInactive || field.isActive)
       .sort((a, b) => a.sortOrder - b.sortOrder || String(a.label).localeCompare(String(b.label)));
 
     return {
       fields,
-      updatedAt: config.updatedAt || null,
+      updatedAt: settingsSource.updatedAt || null,
       updatedBy: updatedById
         ? {
             id: updatedById,
             fullName: updatedByUser?.fullName || '',
           }
         : null,
+      isCustomized: settingsSource.isCustomized === true,
     };
   }
 
-  async updateMeetingDocumentationSettings(fields = [], { actorUserId, userPermissions = [] } = {}) {
-    if (!this._canManageMeetingDocumentationSettings(userPermissions)) {
-      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+  async updateMeetingDocumentationSettings(
+    meetingId,
+    fields = [],
+    { actorUserId, userPermissions = [] } = {}
+  ) {
+    const meeting = await this._getMeetingForAttendance(meetingId, { lean: false });
+    const accessContext = this._resolveMeetingAccess({
+      meeting,
+      actorUserId,
+      userPermissions,
+    });
+
+    if (!accessContext.allowed) {
+      throw ApiError.forbidden('You are not allowed to access this meeting', 'PERMISSION_DENIED');
+    }
+    if (!this._canManageMeetingDocumentationSettings(accessContext)) {
+      throw ApiError.forbidden(
+        'You are not allowed to manage meeting documentation settings',
+        'PERMISSION_DENIED'
+      );
     }
 
-    const config = await getOrCreateMeetingDocumentationConfig();
-    config.fields = this._normalizeMeetingDocumentationSettingsFields(fields);
-    config.updatedBy = this._toObjectId(actorUserId, 'actorUserId');
-    await config.save();
+    const actorObjectId = this._toObjectId(actorUserId, 'actorUserId');
+    meeting.documentationSettings = {
+      isCustomized: true,
+      fields: this._normalizeMeetingDocumentationSettingsFields(fields),
+      updatedAt: new Date(),
+      updatedBy: actorObjectId,
+    };
+    meeting.updatedBy = actorObjectId;
+    await meeting.save();
 
-    return this.getMeetingDocumentationSettings({
+    return this.getMeetingDocumentationSettings(meetingId, {
+      actorUserId,
       userPermissions,
       includeInactive: true,
     });
@@ -1994,8 +2157,8 @@ class MeetingsService {
     );
     const normalizedNotes = this._normalizeText(notes);
     const normalizedAttachments = this._normalizeMeetingDocumentationAssets(attachments || []);
-    const documentationConfig = await getOrCreateMeetingDocumentationConfig();
-    const activeFields = (documentationConfig.fields || [])
+    const documentationSettings = await this._resolveMeetingDocumentationSettingsSource(meeting);
+    const activeFields = (documentationSettings.fields || [])
       .filter((field) => field?.isActive !== false)
       .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
     const activeFieldMap = new Map(activeFields.map((field) => [this._toId(field._id), field]));

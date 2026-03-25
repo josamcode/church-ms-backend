@@ -95,21 +95,38 @@ router.post(
 );
 
 router.get(
-  '/documentation-settings',
+  '/:id/documentation-settings',
   authenticateJWT,
   authorizeAnyPermissions(
+    PERMISSIONS.MEETINGS_VIEW,
+    PERMISSIONS.MEETINGS_VIEW_OWN,
     PERMISSIONS.MEETINGS_SETTINGS_MANAGE,
     PERMISSIONS.MEETINGS_DOCUMENTATION_MANAGE,
     PERMISSIONS.MEETINGS_UPDATE,
     PERMISSIONS.MEETINGS_SERVANTS_MANAGE
   ),
+  validate(meetingsValidators.meetingDocumentationSettingsQuery),
   meetingsController.getMeetingDocumentationSettings
 );
 
-router.put(
-  '/documentation-settings',
+router.get(
+  '/reminder-settings',
   authenticateJWT,
-  authorizeAnyPermissions(PERMISSIONS.MEETINGS_SETTINGS_MANAGE, PERMISSIONS.MEETINGS_UPDATE),
+  authorizePermissions(PERMISSIONS.NOTIFICATIONS_TEMPLATES_MANAGE),
+  meetingsController.listMeetingReminderSettings
+);
+
+router.put(
+  '/:id/documentation-settings',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.MEETINGS_VIEW,
+    PERMISSIONS.MEETINGS_VIEW_OWN,
+    PERMISSIONS.MEETINGS_SETTINGS_MANAGE,
+    PERMISSIONS.MEETINGS_DOCUMENTATION_MANAGE,
+    PERMISSIONS.MEETINGS_UPDATE,
+    PERMISSIONS.MEETINGS_SERVANTS_MANAGE
+  ),
   validate(meetingsValidators.updateMeetingDocumentationSettings),
   meetingsController.updateMeetingDocumentationSettings
 );
@@ -240,6 +257,22 @@ router.get(
   ),
   validate(meetingsValidators.idParam),
   meetingsController.getMeetingById
+);
+
+router.patch(
+  '/:id/reminder-settings',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.MEETINGS_VIEW,
+    PERMISSIONS.MEETINGS_VIEW_OWN,
+    PERMISSIONS.MEETINGS_UPDATE,
+    PERMISSIONS.MEETINGS_SERVANTS_MANAGE,
+    PERMISSIONS.MEETINGS_COMMITTEES_MANAGE,
+    PERMISSIONS.MEETINGS_ACTIVITIES_MANAGE,
+    PERMISSIONS.NOTIFICATIONS_TEMPLATES_MANAGE
+  ),
+  validate(meetingsValidators.updateMeetingReminderSettings),
+  meetingsController.updateMeetingReminderSettings
 );
 
 router.patch(

@@ -282,19 +282,26 @@ class PlatformSettingsService {
     return Object.entries(DEFAULT_NOTIFICATION_TEMPLATES).reduce(
       (accumulator, [templateKey, templateDefaults]) => ({
         ...accumulator,
-        [templateKey]: {
-          title: this._normalizeLocalizedText(
-            value?.[templateKey]?.title || templateDefaults.title,
-            160
-          ),
-          message: this._normalizeLocalizedText(
-            value?.[templateKey]?.message || templateDefaults.message,
-            2000
-          ),
-        },
+        [templateKey]: this._normalizeNotificationTemplateEntry(
+          value?.[templateKey],
+          templateDefaults
+        ),
       }),
       {}
     );
+  }
+
+  _normalizeNotificationTemplateEntry(value = {}, templateDefaults = {}) {
+    return {
+      title: this._normalizeLocalizedText(
+        value?.title || templateDefaults.title,
+        160
+      ),
+      message: this._normalizeLocalizedText(
+        value?.message || templateDefaults.message,
+        2000
+      ),
+    };
   }
 
   _normalizeLeadMinutes(value, fallback = 60) {
@@ -304,6 +311,17 @@ class PlatformSettingsService {
     }
 
     return Math.max(0, Math.min(10080, Math.round(parsedValue)));
+  }
+
+  normalizeMeetingReminderLeadMinutes(value, fallback = 60) {
+    return this._normalizeLeadMinutes(value, fallback);
+  }
+
+  normalizeMeetingReminderTemplate(value = {}) {
+    return this._normalizeNotificationTemplateEntry(
+      value,
+      DEFAULT_NOTIFICATION_TEMPLATES.meetingReminder
+    );
   }
 
   _cloneAvailableTokens() {
@@ -513,11 +531,13 @@ class PlatformSettingsService {
     });
   }
 
-  async renderMeetingReminderNotification(context = {}) {
+  async renderMeetingReminderNotification(context = {}, options = {}) {
     const settings = await this.getManageSettings();
-    const template = settings.notificationTemplates.meetingReminder;
+    const template = options?.template
+      ? this.normalizeMeetingReminderTemplate(options.template)
+      : settings.notificationTemplates.meetingReminder;
     const reminderLeadMinutes = this._normalizeLeadMinutes(
-      context.reminderLeadMinutes,
+      options?.reminderLeadMinutes ?? context.reminderLeadMinutes,
       settings.meetingReminderLeadMinutes
     );
 

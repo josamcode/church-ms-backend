@@ -1,9 +1,20 @@
 const mongoose = require('mongoose');
+const {
+  meetingDocumentationFieldConfigSchema,
+} = require('./meetingDocumentationConfig.model');
 
 const avatarSchema = new mongoose.Schema(
   {
     url: { type: String, trim: true },
     publicId: { type: String, trim: true },
+  },
+  { _id: false }
+);
+
+const localizedTextSchema = new mongoose.Schema(
+  {
+    en: { type: String, trim: true, default: '' },
+    ar: { type: String, trim: true, default: '' },
   },
   { _id: false }
 );
@@ -133,6 +144,87 @@ const committeeSchema = new mongoose.Schema(
 );
 
 const ACTIVITY_TYPES = ['trip', 'conference', 'activity', 'other'];
+
+const DEFAULT_MEETING_REMINDER_TEMPLATE = Object.freeze({
+  title: {
+    ar: 'تذكير بموعد الاجتماع',
+    en: 'تذكير بموعد الاجتماع',
+  },
+  message: {
+    ar: 'سيتبقى {reminderLeadTime} على اجتماع {meetingName} يوم {meetingDay} في {meetingDateTime}.',
+    en: 'سيتبقى {reminderLeadTime} على اجتماع {meetingName} يوم {meetingDay} في {meetingDateTime}.',
+  },
+});
+
+const DEFAULT_MEETING_REMINDER_LEAD_MINUTES = 60;
+
+const meetingReminderTemplateSchema = new mongoose.Schema(
+  {
+    title: {
+      type: localizedTextSchema,
+      default: () => ({
+        ar: DEFAULT_MEETING_REMINDER_TEMPLATE.title.ar,
+        en: DEFAULT_MEETING_REMINDER_TEMPLATE.title.en,
+      }),
+    },
+    message: {
+      type: localizedTextSchema,
+      default: () => ({
+        ar: DEFAULT_MEETING_REMINDER_TEMPLATE.message.ar,
+        en: DEFAULT_MEETING_REMINDER_TEMPLATE.message.en,
+      }),
+    },
+  },
+  { _id: false }
+);
+
+const meetingReminderSettingsSchema = new mongoose.Schema(
+  {
+    leadMinutes: {
+      type: Number,
+      min: 0,
+      max: 10080,
+      default: DEFAULT_MEETING_REMINDER_LEAD_MINUTES,
+    },
+    template: {
+      type: meetingReminderTemplateSchema,
+      default: () => ({
+        title: {
+          ar: DEFAULT_MEETING_REMINDER_TEMPLATE.title.ar,
+          en: DEFAULT_MEETING_REMINDER_TEMPLATE.title.en,
+        },
+        message: {
+          ar: DEFAULT_MEETING_REMINDER_TEMPLATE.message.ar,
+          en: DEFAULT_MEETING_REMINDER_TEMPLATE.message.en,
+        },
+      }),
+    },
+  },
+  { _id: false }
+);
+
+const meetingDocumentationSettingsSchema = new mongoose.Schema(
+  {
+    isCustomized: {
+      type: Boolean,
+      default: false,
+    },
+    fields: {
+      type: [meetingDocumentationFieldConfigSchema],
+      default: [],
+    },
+    updatedAt: {
+      type: Date,
+      default: null,
+    },
+    updatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+  },
+  { _id: false }
+);
 
 const meetingActivitySchema = new mongoose.Schema(
   {
@@ -350,6 +442,31 @@ const meetingSchema = new mongoose.Schema(
       type: [meetingAttendanceAuditEntrySchema],
       default: [],
     },
+    reminderSettings: {
+      type: meetingReminderSettingsSchema,
+      default: () => ({
+        leadMinutes: DEFAULT_MEETING_REMINDER_LEAD_MINUTES,
+        template: {
+          title: {
+            ar: DEFAULT_MEETING_REMINDER_TEMPLATE.title.ar,
+            en: DEFAULT_MEETING_REMINDER_TEMPLATE.title.en,
+          },
+          message: {
+            ar: DEFAULT_MEETING_REMINDER_TEMPLATE.message.ar,
+            en: DEFAULT_MEETING_REMINDER_TEMPLATE.message.en,
+          },
+        },
+      }),
+    },
+    documentationSettings: {
+      type: meetingDocumentationSettingsSchema,
+      default: () => ({
+        isCustomized: false,
+        fields: [],
+        updatedAt: null,
+        updatedBy: null,
+      }),
+    },
     notes: {
       type: String,
       trim: true,
@@ -490,3 +607,5 @@ const Meeting = mongoose.model('Meeting', meetingSchema);
 
 module.exports = Meeting;
 module.exports.ACTIVITY_TYPES = ACTIVITY_TYPES;
+module.exports.DEFAULT_MEETING_REMINDER_TEMPLATE = DEFAULT_MEETING_REMINDER_TEMPLATE;
+module.exports.DEFAULT_MEETING_REMINDER_LEAD_MINUTES = DEFAULT_MEETING_REMINDER_LEAD_MINUTES;

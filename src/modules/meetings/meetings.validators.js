@@ -7,6 +7,20 @@ const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 const objectIdField = Joi.string().pattern(OBJECT_ID_PATTERN);
+const localizedReminderTitleSchema = Joi.object({
+  ar: Joi.string().trim().max(160).required(),
+  en: Joi.string().trim().max(160).allow('').default(''),
+}).required();
+
+const localizedReminderMessageSchema = Joi.object({
+  ar: Joi.string().trim().max(2000).required(),
+  en: Joi.string().trim().max(2000).allow('').default(''),
+}).required();
+
+const meetingReminderTemplateSchema = Joi.object({
+  title: localizedReminderTitleSchema,
+  message: localizedReminderMessageSchema,
+}).required();
 
 const avatarSchema = Joi.object({
   url: Joi.string().uri().required(),
@@ -215,6 +229,14 @@ const updateMeetingActivities = {
   }),
 };
 
+const updateMeetingReminderSettings = {
+  params: idParam.params,
+  body: Joi.object({
+    leadMinutes: Joi.number().integer().min(0).max(10080).required(),
+    template: meetingReminderTemplateSchema.required(),
+  }).required(),
+};
+
 const responsibilitySuggestions = {
   query: Joi.object({
     search: Joi.string().trim().allow('', null).optional(),
@@ -282,6 +304,13 @@ const meetingDocumentationQuery = {
   }),
 };
 
+const meetingDocumentationSettingsQuery = {
+  params: idParam.params,
+  query: Joi.object({
+    includeInactive: Joi.boolean().truthy('true').falsy('false').default(true),
+  }),
+};
+
 const meetingDocumentationFieldResponseSchema = Joi.object({
   fieldId: objectIdField.required(),
   textValue: Joi.string().trim().max(4000).allow('', null).optional(),
@@ -319,6 +348,7 @@ const documentationSettingsFieldSchema = Joi.object({
 });
 
 const updateMeetingDocumentationSettings = {
+  params: idParam.params,
   body: Joi.object({
     fields: Joi.array().items(documentationSettingsFieldSchema).max(50).required(),
   }),
@@ -350,11 +380,13 @@ module.exports = {
   updateMeetingServants,
   updateMeetingCommittees,
   updateMeetingActivities,
+  updateMeetingReminderSettings,
   responsibilitySuggestions,
   servantHistory,
   updateMeetingMemberNotes,
   meetingAttendanceQuery,
   updateMeetingAttendance,
+  meetingDocumentationSettingsQuery,
   meetingDocumentationQuery,
   updateMeetingDocumentation,
   updateMeetingDocumentationSettings,

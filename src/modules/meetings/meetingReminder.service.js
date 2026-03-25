@@ -132,6 +132,9 @@ class MeetingReminderService {
       meetingDateTime: occurrenceAt,
       sectorName,
       reminderLeadMinutes,
+    }, {
+      template: meeting?.reminderSettings?.template,
+      reminderLeadMinutes,
     });
 
     return {
@@ -204,8 +207,6 @@ class MeetingReminderService {
     const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
     if (Number.isNaN(now.getTime())) return;
 
-    const settings = await platformSettingsService.getManageSettings();
-    const leadMinutes = this._normalizeLeadMinutes(settings?.meetingReminderLeadMinutes, 60);
     const pollIntervalMs = Number(config.meetingReminders?.pollIntervalMs || 60 * 1000);
     const lookbackMs = Math.max(pollIntervalMs, 60 * 1000);
 
@@ -214,11 +215,16 @@ class MeetingReminderService {
       day: { $exists: true, $ne: '' },
       time: { $exists: true, $ne: '' },
     })
-      .select('_id name day time sectorId createdBy')
+      .select('_id name day time sectorId createdBy reminderSettings')
       .populate('sectorId', 'name')
       .lean();
 
     for (const meeting of meetings) {
+      const leadMinutes = this._normalizeLeadMinutes(
+        meeting?.reminderSettings?.leadMinutes,
+        60
+      );
+
       await this._sendReminderForMeeting(meeting, {
         now,
         leadMinutes,
