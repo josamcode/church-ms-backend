@@ -8,7 +8,7 @@ const platformSettingsService = require('./platformSettings.service');
 const getPublicSite = asyncHandler(async (_req, res) => {
   const registrationEnabled = await platformSettingsService.isRegistrationEnabled();
   const site = {
-    name: config.site?.name || 'كنيسة الملاك ميخائيل',
+    name: config.site?.name || 'كنيسة الملاك ميخائيل بالقطوشة',
     tagline: config.site?.tagline || 'قرية القطوشة - التابعة لإيبارشية مطاى',
     registrationEnabled,
   };

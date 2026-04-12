@@ -36,7 +36,7 @@ const seedUsers = [
       governorate: 'المنيا',
       city: 'مطاي',
       street: 'قرية القطوشة',
-      details: 'كنيسة الملاك ميخائيل',
+      details: 'كنيسة الملاك ميخائيل بالقطوشة',
     },
     hasLogin: true,
     loginIdentifierType: 'email',
