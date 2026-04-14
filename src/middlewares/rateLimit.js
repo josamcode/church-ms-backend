@@ -4,6 +4,10 @@ const jwt = require('jsonwebtoken');
 const redisClient = require('../config/redis');
 const ApiResponse = require('../utils/apiResponse');
 const config = require('../config/env');
+const logger = require('../utils/logger');
+
+const HEALTH_CHECK_PATH = '/health';
+const ANALYTICS_SYNC_PATH = '/system-analytics/sessions/sync';
 
 const getBearerToken = (req) => {
   const authHeader = req.headers.authorization;
@@ -35,8 +39,26 @@ const resolveAuthenticatedRateLimitKey = (req) => {
 const resolveRateLimitKey = (req) =>
   resolveAuthenticatedRateLimitKey(req) || resolveIpRateLimitKey(req);
 
-const shouldSkipRateLimit = (req) =>
-  req.method === 'OPTIONS' || req.path === '/health';
+const resolveAnalyticsRateLimitKey = (req) => {
+  const authenticatedKey = resolveAuthenticatedRateLimitKey(req);
+  if (authenticatedKey) {
+    return authenticatedKey;
+  }
+
+  const sessionId = String(req.body?.sessionId || '').trim();
+  if (sessionId) {
+    return `analytics-session:${sessionId}`;
+  }
+
+  return resolveIpRateLimitKey(req);
+};
+
+const shouldSkipRateLimit = (req) => req.method === 'OPTIONS';
+
+const shouldSkipGeneralRateLimit = (req) =>
+  shouldSkipRateLimit(req) ||
+  req.path === HEALTH_CHECK_PATH ||
+  req.path === ANALYTICS_SYNC_PATH;
 
 const createRateLimiter = (
   windowMs,
@@ -50,7 +72,22 @@ const createRateLimiter = (
     max,
     standardHeaders: true,
     legacyHeaders: false,
-    handler: (_req, res) => {
+    handler: (req, res) => {
+      let rateLimitKey = 'unknown';
+      try {
+        rateLimitKey = keyGenerator(req, res);
+      } catch (_error) {
+        rateLimitKey = 'unknown';
+      }
+
+      logger.warn('Rate limit exceeded', {
+        path: req.originalUrl || req.path,
+        method: req.method,
+        rateLimitKey,
+        ip: req.ip || req.socket?.remoteAddress || 'unknown',
+        forwardedFor: req.get('x-forwarded-for') || '',
+      });
+
       return ApiResponse.error(res, {
         message: message || 'Too many requests. Please try again later.',
         errorCode: 'RATE_LIMITED',
@@ -79,7 +116,16 @@ const generalLimiter = createRateLimiter(
   config.rateLimit.windowMs,
   config.rateLimit.max,
   'Too many requests. Please try again later.',
-  'rl:general:'
+  'rl:general:',
+  { skip: shouldSkipGeneralRateLimit }
+);
+
+const analyticsSessionLimiter = createRateLimiter(
+  60 * 60 * 1000,
+  240,
+  'Too many analytics sync requests. Please try again later.',
+  'rl:analytics:',
+  { keyGenerator: resolveAnalyticsRateLimitKey }
 );
 
 const authLimiter = createRateLimiter(
@@ -106,6 +152,7 @@ const publicBookingLimiter = createRateLimiter(
 
 module.exports = {
   generalLimiter,
+  analyticsSessionLimiter,
   authLimiter,
   uploadLimiter,
   publicBookingLimiter,

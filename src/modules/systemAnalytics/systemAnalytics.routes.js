@@ -5,11 +5,13 @@ const systemAnalyticsController = require('./systemAnalytics.controller');
 const systemAnalyticsValidators = require('./systemAnalytics.validators');
 const validate = require('../../middlewares/validate');
 const { authenticateJWT, optionalAuth } = require('../../middlewares/auth');
+const { analyticsSessionLimiter } = require('../../middlewares/rateLimit');
 const { authorizePermissions } = require('../../middlewares/permissions');
 const { PERMISSIONS } = require('../../constants/permissions');
 
 router.post(
   '/sessions/sync',
+  analyticsSessionLimiter,
   optionalAuth,
   validate(systemAnalyticsValidators.syncSession),
   systemAnalyticsController.syncSession
