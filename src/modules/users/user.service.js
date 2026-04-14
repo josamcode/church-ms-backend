@@ -207,7 +207,7 @@ class UserService {
    * جلب قائمة المستخدمين مع ترقيم المؤشر (Cursor Pagination)
    */
   async listUsers({ cursor, limit = 20, sort = 'createdAt', order = 'desc', filters = {} }) {
-    const query = {};
+    const baseQuery = {};
 
     // Filters
     const namePhoneOrConditions = [];
@@ -220,37 +220,39 @@ class UserService {
       });
     }
     if (namePhoneOrConditions.length === 1) {
-      Object.assign(query, namePhoneOrConditions[0]);
+      Object.assign(baseQuery, namePhoneOrConditions[0]);
     } else if (namePhoneOrConditions.length > 1) {
-      query.$or = namePhoneOrConditions;
+      baseQuery.$or = namePhoneOrConditions;
     }
     if (filters.ageGroup) {
-      query.ageGroup = filters.ageGroup;
+      baseQuery.ageGroup = filters.ageGroup;
     }
     if (filters.tags) {
       const tagsArray = Array.isArray(filters.tags) ? filters.tags : [filters.tags];
       if (tagsArray.length > 0) {
-        query.tags = { $in: tagsArray };
+        baseQuery.tags = { $in: tagsArray };
       }
     }
     if (filters.role) {
-      query.role = filters.role;
+      baseQuery.role = filters.role;
     }
     if (filters.accountStatus) {
-      query.accountStatus = filters.accountStatus;
+      baseQuery.accountStatus = filters.accountStatus;
     }
     if (filters.familyName) {
-      query.familyName = { $regex: filters.familyName, $options: 'i' };
+      baseQuery.familyName = { $regex: filters.familyName, $options: 'i' };
     }
     if (filters.houseName) {
-      query.houseName = { $regex: filters.houseName, $options: 'i' };
+      baseQuery.houseName = { $regex: filters.houseName, $options: 'i' };
     }
     if (filters.gender) {
-      query.gender = filters.gender;
+      baseQuery.gender = filters.gender;
     }
     if (filters.isLocked !== undefined) {
-      query.isLocked = String(filters.isLocked) === 'true';
+      baseQuery.isLocked = String(filters.isLocked) === 'true';
     }
+
+    const query = { ...baseQuery };
 
     // Cursor-based pagination
     if (cursor) {
@@ -265,13 +267,19 @@ class UserService {
 
     const sortDirection = order === 'desc' ? -1 : 1;
 
-    const users = await User.find(query)
-      .select('-changeLog -passwordHash -__v')
-      .sort({ [sort]: sortDirection, _id: sortDirection })
-      .limit(limit)
-      .lean();
+    const [totalCount, users] = await Promise.all([
+      User.countDocuments(baseQuery),
+      User.find(query)
+        .select('-changeLog -passwordHash -__v')
+        .sort({ [sort]: sortDirection, _id: sortDirection })
+        .limit(limit)
+        .lean(),
+    ]);
 
-    const meta = buildPaginationMeta(users, limit, sort);
+    const meta = {
+      ...buildPaginationMeta(users, limit, sort),
+      totalCount,
+    };
 
     return { users, meta };
   }

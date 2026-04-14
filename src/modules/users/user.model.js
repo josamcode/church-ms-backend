@@ -241,7 +241,6 @@ const userSchema = new mongoose.Schema(
     phonePrimary: {
       type: String,
       required: [true, 'رقم الهاتف الأساسي مطلوب'],
-      unique: true,
       trim: true,
     },
     phoneSecondary: {
@@ -398,13 +397,22 @@ const userSchema = new mongoose.Schema(
 );
 
 /* ──────────────── Indexes ──────────────── */
-// Note: phonePrimary, email, nationalId already have indexes via unique:true in schema
+// Note: email and nationalId already have indexes via unique:true in schema
 
 userSchema.path('birthDate').required(false);
 userSchema.path('phonePrimary').required(false);
-userSchema.path('phonePrimary').options.sparse = true;
 
 userSchema.index({ fullName: 'text' });
+userSchema.index(
+  { phonePrimary: 1 },
+  {
+    name: 'phonePrimary_1',
+    unique: true,
+    partialFilterExpression: {
+      phonePrimary: { $type: 'string', $gt: '' },
+    },
+  }
+);
 userSchema.index({ tags: 1 });
 userSchema.index({ ageGroup: 1 });
 userSchema.index({ role: 1 });

@@ -8,6 +8,8 @@
     "dev": "npx nodemon src/server.js",
     "test": "jest --coverage --forceExit",
     "seed": "node scripts/seed.js",
+    "users:import-excel": "node scripts/importUsersFromExcel.js",
+    "users:repair-phone-index": "node scripts/repairUserPhonePrimaryIndex.js",
     "backup:run": "node scripts/runBackup.js",
     "google-drive:authorize": "node scripts/authorizeGoogleDrive.js",
     "push:generate-vapid": "node scripts/generateVapidKeys.js"
