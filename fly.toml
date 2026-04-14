@@ -4,8 +4,9 @@ primary_region = "ams"
 [build]
 
 [env]
-  TRUST_PROXY = "1"
+  TRUST_PROXY = "true"
   RATE_LIMIT_MAX = "600"
+  RATE_LIMIT_AUTHENTICATED_MAX = "5000"
 
 [[files]]
   guest_path = "/app/secure/google-oauth-client.json"

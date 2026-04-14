@@ -60,6 +60,11 @@ const shouldSkipGeneralRateLimit = (req) =>
   req.path === HEALTH_CHECK_PATH ||
   req.path === ANALYTICS_SYNC_PATH;
 
+const resolveGeneralRateLimitMax = (req) =>
+  resolveAuthenticatedRateLimitKey(req)
+    ? config.rateLimit.authenticatedMax
+    : config.rateLimit.anonymousMax;
+
 const createRateLimiter = (
   windowMs,
   max,
@@ -84,6 +89,10 @@ const createRateLimiter = (
         path: req.originalUrl || req.path,
         method: req.method,
         rateLimitKey,
+        limit: req.rateLimit?.limit,
+        used: req.rateLimit?.used,
+        remaining: req.rateLimit?.remaining,
+        resetTime: req.rateLimit?.resetTime,
         ip: req.ip || req.socket?.remoteAddress || 'unknown',
         forwardedFor: req.get('x-forwarded-for') || '',
       });
@@ -114,7 +123,7 @@ const createRateLimiter = (
 
 const generalLimiter = createRateLimiter(
   config.rateLimit.windowMs,
-  config.rateLimit.max,
+  resolveGeneralRateLimitMax,
   'Too many requests. Please try again later.',
   'rl:general:',
   { skip: shouldSkipGeneralRateLimit }

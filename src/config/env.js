@@ -38,8 +38,8 @@ const parseTrustProxy = (value, fallback) => {
   }
 
   const normalized = String(value).trim().toLowerCase();
-  if (['true', '1'].includes(normalized)) return 1;
-  if (['false', '0'].includes(normalized)) return false;
+  if (['true', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', 'no', 'off'].includes(normalized)) return false;
 
   const parsedInteger = Number.parseInt(normalized, 10);
   if (Number.isFinite(parsedInteger) && parsedInteger >= 0) {
@@ -235,6 +235,14 @@ const config = {
   rateLimit: {
     windowMs: parseInteger(process.env.RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
     max: parseInteger(process.env.RATE_LIMIT_MAX, isProduction ? 600 : 100),
+    anonymousMax: parseInteger(
+      process.env.RATE_LIMIT_ANONYMOUS_MAX,
+      parseInteger(process.env.RATE_LIMIT_MAX, isProduction ? 600 : 100)
+    ),
+    authenticatedMax: parseInteger(
+      process.env.RATE_LIMIT_AUTHENTICATED_MAX,
+      isProduction ? 5000 : 500
+    ),
   },
 
   upload: {
