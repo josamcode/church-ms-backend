@@ -303,8 +303,8 @@ const userSchema = new mongoose.Schema(
     loginIdentifierType: {
       type: String,
       enum: {
-        values: ['phone', 'email'],
-        message: 'نوع معرف الدخول يجب أن يكون هاتف أو بريد إلكتروني',
+        values: ['phone', 'email', 'nationalId'],
+        message: 'نوع معرف الدخول يجب أن يكون هاتف أو بريد إلكتروني أو رقم قومي',
       },
     },
     passwordHash: {
@@ -545,7 +545,7 @@ userSchema.methods.toSafeObject = function () {
 
 userSchema.statics.findByIdentifier = function (identifier) {
   return this.findOne({
-    $or: [{ phonePrimary: identifier }, { email: identifier }],
+    $or: [{ phonePrimary: identifier }, { email: identifier }, { nationalId: identifier }],
   });
 };
 

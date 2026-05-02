@@ -95,8 +95,8 @@ const register = {
 const login = {
   body: Joi.object({
     identifier: Joi.string().trim().required().messages({
-      'string.empty': 'رقم الهاتف أو البريد الإلكتروني مطلوب',
-      'any.required': 'رقم الهاتف أو البريد الإلكتروني مطلوب',
+      'string.empty': 'رقم الهاتف أو البريد الإلكتروني أو الرقم القومي مطلوب',
+      'any.required': 'رقم الهاتف أو البريد الإلكتروني أو الرقم القومي مطلوب',
     }),
     password: Joi.string().required().messages({
       'string.empty': 'كلمة المرور مطلوبة',

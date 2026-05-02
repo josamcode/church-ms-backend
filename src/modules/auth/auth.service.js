@@ -230,9 +230,7 @@ class AuthService {
   }
 
   async login({ identifier, password }) {
-    const user = await User.findOne({
-      $or: [{ phonePrimary: identifier }, { email: identifier }],
-    }).select('+passwordHash');
+    const user = await User.findByIdentifier(identifier).select('+passwordHash');
 
     if (!user) {
       throw ApiError.unauthorized('Invalid credentials', 'AUTH_INVALID_CREDENTIALS');

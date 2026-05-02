@@ -37,6 +37,13 @@ class UserService {
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }
 
+  _getLoginIdentifierType(data = {}) {
+    if (data.email) return 'email';
+    if (data.phonePrimary) return 'phone';
+    if (data.nationalId) return 'nationalId';
+    return 'phone';
+  }
+
   async _normalizeConfessionFatherFields(data = {}) {
     if (data.confessionFatherUserId === undefined && data.confessionFatherName === undefined) {
       return data;
@@ -193,7 +200,7 @@ class UserService {
     if (preparedData.password) {
       userData.hasLogin = true;
       userData.passwordHash = preparedData.password;
-      userData.loginIdentifierType = preparedData.email ? 'email' : 'phone';
+      userData.loginIdentifierType = this._getLoginIdentifierType(preparedData);
       delete userData.password;
     }
 
@@ -805,10 +812,12 @@ class UserService {
           user.hasLogin = true;
         }
 
-        const nextLoginIdentifierType =
-          preparedData.email !== undefined
-            ? (preparedData.email ? 'email' : 'phone')
-            : (user.email ? 'email' : 'phone');
+        const nextLoginIdentifierType = this._getLoginIdentifierType({
+          email: preparedData.email !== undefined ? preparedData.email : user.email,
+          phonePrimary:
+            preparedData.phonePrimary !== undefined ? preparedData.phonePrimary : user.phonePrimary,
+          nationalId: preparedData.nationalId !== undefined ? preparedData.nationalId : user.nationalId,
+        });
 
         if (user.loginIdentifierType !== nextLoginIdentifierType) {
           changes.push({
