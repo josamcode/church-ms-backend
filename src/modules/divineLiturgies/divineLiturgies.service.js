@@ -653,6 +653,77 @@ class DivineLiturgiesService {
       .lean();
   }
 
+  _mapPublicPriest(priestUserLike) {
+    const mapped = this._mapUser(priestUserLike);
+    if (!mapped) return null;
+    return {
+      id: mapped.id,
+      fullName: mapped.fullName,
+      avatar: mapped.avatar,
+    };
+  }
+
+  _mapPublicRecurring(entry) {
+    const mapped = this._mapRecurring(entry);
+    return {
+      id: mapped.id,
+      serviceType: mapped.serviceType,
+      dayOfWeek: mapped.dayOfWeek,
+      startTime: mapped.startTime,
+      endTime: mapped.endTime,
+      name: mapped.name,
+      displayName: mapped.displayName,
+      priests: (entry.priestUserIds || [])
+        .map((userLike) => this._mapPublicPriest(userLike))
+        .filter(Boolean),
+    };
+  }
+
+  _mapPublicException(entry) {
+    const mapped = this._mapException(entry);
+    return {
+      id: mapped.id,
+      date: mapped.date,
+      startTime: mapped.startTime,
+      endTime: mapped.endTime,
+      name: mapped.name,
+      displayName: mapped.displayName,
+      priests: (entry.priestUserIds || [])
+        .map((userLike) => this._mapPublicPriest(userLike))
+        .filter(Boolean),
+    };
+  }
+
+  async getPublicOverview() {
+    const todayKey = this._buildLocalDateKey();
+    const [recurring, exceptions] = await Promise.all([
+      DivineLiturgyRecurring.find({})
+        .populate('priestUserIds', 'fullName avatar')
+        .lean(),
+      DivineLiturgyException.find({})
+        .populate('priestUserIds', 'fullName avatar')
+        .lean(),
+    ]);
+
+    const recurringDivineLiturgies = this._sortRecurring(
+      recurring.filter((entry) => entry.serviceType === SERVICE_TYPES.DIVINE_LITURGY)
+    ).map((entry) => this._mapPublicRecurring(entry));
+
+    const recurringVespers = this._sortRecurring(
+      recurring.filter((entry) => entry.serviceType === SERVICE_TYPES.VESPERS)
+    ).map((entry) => this._mapPublicRecurring(entry));
+
+    const upcomingExceptions = this._sortExceptions(exceptions)
+      .map((entry) => this._mapPublicException(entry))
+      .filter((entry) => entry.date && entry.date >= todayKey);
+
+    return {
+      recurringDivineLiturgies,
+      recurringVespers,
+      exceptionalDivineLiturgies: upcomingExceptions,
+    };
+  }
+
   async getOverview() {
     const [priests, recurring, exceptions] = await Promise.all([
       ChurchPriest.find({})

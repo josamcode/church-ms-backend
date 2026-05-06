@@ -8,6 +8,8 @@ const { authenticateJWT } = require('../../middlewares/auth');
 const { authorizeAnyPermissions, authorizePermissions } = require('../../middlewares/permissions');
 const { PERMISSIONS } = require('../../constants/permissions');
 
+router.get('/public', divineLiturgiesController.getPublicOverview);
+
 router.get(
   '/',
   authenticateJWT,

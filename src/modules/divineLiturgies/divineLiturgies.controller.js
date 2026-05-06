@@ -10,6 +10,14 @@ const getOverview = asyncHandler(async (_req, res) => {
   });
 });
 
+const getPublicOverview = asyncHandler(async (_req, res) => {
+  const data = await divineLiturgiesService.getPublicOverview();
+  return ApiResponse.success(res, {
+    message: 'Divine liturgy schedule loaded successfully',
+    data,
+  });
+});
+
 const getAttendanceContext = asyncHandler(async (req, res) => {
   const data = await divineLiturgiesService.getAttendanceContext(req.params.entryType, req.params.id, {
     actorUserId: req.user.id,
@@ -112,6 +120,7 @@ const setChurchPriests = asyncHandler(async (req, res) => {
 
 module.exports = {
   getOverview,
+  getPublicOverview,
   getAttendanceContext,
   getAttendance,
   updateAttendance,
