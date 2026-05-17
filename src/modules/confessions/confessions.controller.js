@@ -87,6 +87,8 @@ const getAlerts = asyncHandler(async (req, res) => {
   const alerts = await confessionsService.getAlerts({
     thresholdDays: req.query.thresholdDays ? parseInt(req.query.thresholdDays, 10) : undefined,
     fullName: req.query.fullName,
+    page: parseInt(req.query.page, 10) || 1,
+    limit: parseInt(req.query.limit, 10) || 100,
   });
   return ApiResponse.success(res, {
     message: 'Confession alerts loaded successfully',

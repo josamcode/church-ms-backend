@@ -276,7 +276,9 @@ class HouseholdClassificationService {
       return new Map();
     }
 
-    const { evaluations } = await this._evaluateAllHouseholds();
+    const { evaluations } = await this._evaluateAllHouseholds({
+      includeCategoryEvaluations: false,
+    });
 
     const categoryCountMap = new Map();
     evaluations.forEach((entry) => {
@@ -437,7 +439,10 @@ class HouseholdClassificationService {
   }
 
   async _loadUsersForEvaluation() {
-    return User.find({ isDeleted: { $ne: true } })
+    return User.find({
+      isDeleted: { $ne: true },
+      houseName: { $exists: true, $nin: [null, ''] },
+    })
       .select(
         [
           'fullName',
@@ -447,17 +452,51 @@ class HouseholdClassificationService {
           'gender',
           'ageGroup',
           'birthDate',
-          'education',
-          'financial',
-          'employment',
-          'presence',
-          'health',
+          'education.stage',
+          'financial.monthlyIncome',
+          'financial.source',
+          'employment.status',
+          'presence.status',
+          'presence.travelDestination',
+          'health.conditions.name',
         ].join(' ')
       )
+      .sort({ houseName: 1, fullName: 1 })
       .lean();
   }
 
-  async _evaluateAllHouseholds() {
+  async _loadUsersForHouseholdEvaluation(houseName) {
+    const normalizedHouseName = trimString(houseName);
+    if (!normalizedHouseName) return [];
+
+    return User.find({
+      isDeleted: { $ne: true },
+      houseName: normalizedHouseName,
+    })
+      .select(
+        [
+          'fullName',
+          'phonePrimary',
+          'familyName',
+          'houseName',
+          'gender',
+          'ageGroup',
+          'birthDate',
+          'education.stage',
+          'financial.monthlyIncome',
+          'financial.source',
+          'employment.status',
+          'presence.status',
+          'presence.travelDestination',
+          'health.conditions.name',
+        ].join(' ')
+      )
+      .sort({ fullName: 1 })
+      .lean();
+  }
+
+  async _evaluateAllHouseholds(options = {}) {
+    const includeCategoryEvaluations = options.includeCategoryEvaluations !== false;
     const [categories, users] = await Promise.all([
       this._loadActiveCategoriesForEvaluation(),
       this._loadUsersForEvaluation(),
@@ -470,7 +509,9 @@ class HouseholdClassificationService {
 
     const evaluations = snapshots
       .map((snapshot) => {
-        const evaluation = evaluateHouseholdSnapshot(snapshot, categories);
+        const evaluation = evaluateHouseholdSnapshot(snapshot, categories, {
+          includeCategoryEvaluations,
+        });
         return this._applyHouseholdProfileToEvaluation(
           evaluation,
           profileMap.get(snapshot.householdKey),
@@ -549,7 +590,9 @@ class HouseholdClassificationService {
     includeUnclassified = true,
     isLordsBrethren,
   }) {
-    const { categories, evaluations: allEvaluations } = await this._evaluateAllHouseholds();
+    const { categories, evaluations: allEvaluations } = await this._evaluateAllHouseholds({
+      includeCategoryEvaluations: false,
+    });
     let evaluations = [...allEvaluations];
 
     const normalizedSearch = trimString(search)?.toLowerCase();
@@ -569,8 +612,11 @@ class HouseholdClassificationService {
     }
 
     if (isLordsBrethren !== undefined) {
+      const requestedLordsBrethren = Boolean(isLordsBrethren);
       const lordsBrethrenCats = new Set(
-        categories.filter(c => c.isLordsBrethren).map(c => String(c._id))
+        categories
+          .filter((category) => Boolean(category.isLordsBrethren) === requestedLordsBrethren)
+          .map((category) => String(category._id))
       );
       
       evaluations = evaluations.filter((entry) => {
@@ -870,19 +916,19 @@ class HouseholdClassificationService {
   async getHouseholdSummaryForUser(user) {
     if (!user) return null;
 
-    const [categories, users] = await Promise.all([
-      this._loadActiveCategoriesForEvaluation(),
-      this._loadUsersForEvaluation(),
-    ]);
-
     const seed = createHouseholdSeed(user);
     if (!seed) return null;
-    const profile = await HouseholdProfile.findOne({ householdKey: seed.householdKey }).lean();
+
+    const [categories, users, profile] = await Promise.all([
+      this._loadActiveCategoriesForEvaluation(),
+      this._loadUsersForHouseholdEvaluation(seed.householdName),
+      HouseholdProfile.findOne({ householdKey: seed.householdKey }).lean(),
+    ]);
+
     const categoryMap = new Map(categories.map((category) => [String(category._id), category]));
     const snapshot = buildHouseholdSnapshots(users).find(
       (entry) => entry.householdKey === seed.householdKey
     );
-
     if (!snapshot) return null;
 
     return this._applyHouseholdProfileToEvaluation(
@@ -902,8 +948,11 @@ class HouseholdClassificationService {
 
     // 1. Filter by category
     if (isLordsBrethren !== undefined) {
+      const requestedLordsBrethren = Boolean(isLordsBrethren);
       const targetCategoryIds = new Set(
-        categories.filter(c => c.isLordsBrethren).map(c => String(c._id))
+        categories
+          .filter((category) => Boolean(category.isLordsBrethren) === requestedLordsBrethren)
+          .map((category) => String(category._id))
       );
       
       evaluations = evaluations.filter((entry) => {

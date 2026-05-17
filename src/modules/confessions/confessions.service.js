@@ -177,13 +177,117 @@ class ConfessionsService {
     }
   }
 
-  async _buildAlerts({ thresholdDays, fullName }) {
+  async _buildAlerts({ thresholdDays, fullName, page, limit }) {
     const now = new Date();
     const cutoffDate = new Date(now.getTime() - thresholdDays * DAY_MS);
+    const hasPagination = page !== undefined || limit !== undefined;
+    const safePage = Math.max(Number(page) || 1, 1);
+    const safeLimit = Math.max(Math.min(Number(limit) || 100, 100), 1);
+    const skip = (safePage - 1) * safeLimit;
 
-    const userQuery = {};
+    const userQuery = { isDeleted: { $ne: true } };
     if (fullName) {
       userQuery.fullName = { $regex: fullName, $options: 'i' };
+    }
+
+    if (hasPagination) {
+      const [result = {}] = await User.aggregate([
+        { $match: userQuery },
+        {
+          $lookup: {
+            from: ConfessionSession.collection.name,
+            let: { userId: '$_id' },
+            pipeline: [
+              { $match: { $expr: { $eq: ['$attendeeUserId', '$$userId'] } } },
+              {
+                $group: {
+                  _id: '$attendeeUserId',
+                  lastSessionAt: { $max: '$scheduledAt' },
+                  sessionsCount: { $sum: 1 },
+                },
+              },
+            ],
+            as: 'confessionStats',
+          },
+        },
+        {
+          $addFields: {
+            confessionStats: { $arrayElemAt: ['$confessionStats', 0] },
+          },
+        },
+        {
+          $addFields: {
+            lastSessionAt: { $ifNull: ['$confessionStats.lastSessionAt', null] },
+            sessionsCount: { $ifNull: ['$confessionStats.sessionsCount', 0] },
+          },
+        },
+        {
+          $match: {
+            $or: [
+              { lastSessionAt: null },
+              { lastSessionAt: { $lt: cutoffDate } },
+            ],
+          },
+        },
+        {
+          $addFields: {
+            daysSinceLastSession: {
+              $cond: [
+                { $ne: ['$lastSessionAt', null] },
+                {
+                  $floor: {
+                    $divide: [{ $subtract: [now, '$lastSessionAt'] }, DAY_MS],
+                  },
+                },
+                null,
+              ],
+            },
+            alertSortDays: { $ifNull: ['$daysSinceLastSession', Number.MAX_SAFE_INTEGER] },
+          },
+        },
+        {
+          $facet: {
+            metadata: [{ $count: 'count' }],
+            alerts: [
+              { $sort: { alertSortDays: -1, fullName: 1, _id: 1 } },
+              { $skip: skip },
+              { $limit: safeLimit },
+              {
+                $project: {
+                  _id: 0,
+                  userId: '$_id',
+                  fullName: 1,
+                  phonePrimary: { $ifNull: ['$phonePrimary', null] },
+                  avatar: { $ifNull: ['$avatar', null] },
+                  role: { $ifNull: ['$role', null] },
+                  lastSessionAt: 1,
+                  daysSinceLastSession: 1,
+                  sessionsCount: 1,
+                },
+              },
+            ],
+          },
+        },
+      ]);
+
+      const totalCount = Number(result.metadata?.[0]?.count || 0);
+      const totalPages = Math.max(Math.ceil(totalCount / safeLimit), 1);
+      const currentPage = Math.min(safePage, totalPages);
+
+      return {
+        alerts: Array.isArray(result.alerts) ? result.alerts : [],
+        cutoffDate,
+        thresholdDays,
+        totalCount,
+        meta: {
+          page: currentPage,
+          limit: safeLimit,
+          totalCount,
+          totalPages,
+          hasNextPage: currentPage < totalPages,
+          hasPrevPage: currentPage > 1,
+        },
+      };
     }
 
     const users = await User.find(userQuery)
@@ -240,7 +344,7 @@ class ConfessionsService {
       return bDays - aDays;
     });
 
-    return { alerts, cutoffDate, thresholdDays };
+    return { alerts, cutoffDate, thresholdDays, totalCount: alerts.length };
   }
 
   async listSessionTypes() {
@@ -499,19 +603,22 @@ class ConfessionsService {
     };
   }
 
-  async getAlerts({ thresholdDays, fullName }) {
+  async getAlerts({ thresholdDays, fullName, page, limit }) {
     const config = await getOrCreateConfessionConfig();
     const effectiveThreshold = thresholdDays || config.alertThresholdDays;
 
-    const { alerts, cutoffDate } = await this._buildAlerts({
+    const { alerts, cutoffDate, totalCount, meta } = await this._buildAlerts({
       thresholdDays: effectiveThreshold,
       fullName,
+      page,
+      limit,
     });
 
     return {
       thresholdDays: effectiveThreshold,
       cutoffDate,
-      count: alerts.length,
+      count: totalCount ?? alerts.length,
+      meta,
       alerts,
     };
   }

@@ -254,8 +254,46 @@ function evaluateCriterion(snapshot, criterion) {
   };
 }
 
-function evaluateCategory(snapshot, category) {
+function evaluateCategory(snapshot, category, options = {}) {
+  const includeCriteriaDetails = options.includeCriteriaDetails !== false;
   const criteria = Array.isArray(category.criteria) ? category.criteria : [];
+
+  if (!includeCriteriaDetails) {
+    let requiredCount = 0;
+    let matchedRequiredCriteria = 0;
+    let matchedOptionalCriteria = 0;
+
+    criteria.forEach((criterion) => {
+      const result = evaluateCriterion(snapshot, criterion);
+      if (result.isRequired) {
+        requiredCount += 1;
+        if (result.passed) matchedRequiredCriteria += 1;
+        return;
+      }
+
+      if (result.passed) matchedOptionalCriteria += 1;
+    });
+
+    const matched =
+      criteria.length > 0 &&
+      matchedRequiredCriteria === requiredCount &&
+      (requiredCount > 0 || matchedOptionalCriteria > 0);
+
+    return {
+      id: String(category._id || category.id),
+      name: category.name,
+      description: category.description || '',
+      color: category.color,
+      priority: category.priority,
+      isDefault: Boolean(category.isDefault),
+      isActive: Boolean(category.isActive),
+      isConfigured: criteria.length > 0,
+      matched,
+      matchedRequiredCriteria,
+      matchedOptionalCriteria,
+    };
+  }
+
   const results = criteria.map((criterion) => evaluateCriterion(snapshot, criterion));
   const requiredResults = results.filter((result) => result.isRequired);
   const optionalResults = results.filter((result) => !result.isRequired);
@@ -281,9 +319,12 @@ function evaluateCategory(snapshot, category) {
   };
 }
 
-function evaluateHouseholdSnapshot(snapshot, categories = []) {
+function evaluateHouseholdSnapshot(snapshot, categories = [], options = {}) {
+  const includeCategoryEvaluations = options.includeCategoryEvaluations !== false;
   const categoryEvaluations = categories
-    .map((category) => evaluateCategory(snapshot, category))
+    .map((category) => evaluateCategory(snapshot, category, {
+      includeCriteriaDetails: includeCategoryEvaluations,
+    }))
     .sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name));
 
   const matchedCategories = categoryEvaluations.filter((category) => category.matched);
@@ -311,7 +352,7 @@ function evaluateHouseholdSnapshot(snapshot, categories = []) {
       color: category.color,
       priority: category.priority,
     })),
-    categoryEvaluations,
+    ...(includeCategoryEvaluations ? { categoryEvaluations } : {}),
   };
 }
 

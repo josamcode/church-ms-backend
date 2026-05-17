@@ -64,6 +64,8 @@ const alertsQuery = {
   query: Joi.object({
     fullName: Joi.string().trim().optional(),
     thresholdDays: Joi.number().integer().min(1).max(3650).optional(),
+    page: Joi.number().integer().min(1).default(1),
+    limit: Joi.number().integer().min(1).max(100).default(100),
   }),
 };
 
