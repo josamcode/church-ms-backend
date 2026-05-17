@@ -442,6 +442,7 @@ class SystemAnalyticsService {
                 exitPath: 1,
                 totalActiveSeconds: 1,
                 totalPageViews: 1,
+                pathStats: 1,
                 pathsVisitedCount: { $size: { $ifNull: ['$pathsVisited', []] } },
                 startedAt: 1,
                 lastSeenAt: 1,
@@ -515,6 +516,15 @@ class SystemAnalyticsService {
         totalActiveSeconds: session.totalActiveSeconds || 0,
         totalPageViews: session.totalPageViews || 0,
         pathsVisitedCount: session.pathsVisitedCount || 0,
+        paths: Object.values(session.pathStats || {})
+          .map((entry) => ({
+            path: entry.path || '/',
+            title: entry.title || '',
+            views: entry.views || 0,
+            activeSeconds: entry.activeSeconds || 0,
+            lastSeenAt: entry.lastSeenAt,
+          }))
+          .sort((a, b) => new Date(b.lastSeenAt || 0) - new Date(a.lastSeenAt || 0)),
         startedAt: session.startedAt,
         lastSeenAt: session.lastSeenAt,
         isAuthenticated: Boolean(session.isAuthenticated),
