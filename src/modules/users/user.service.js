@@ -19,6 +19,151 @@ const {
   validateImageUpload,
 } = require('../../utils/fileUploads');
 
+const LIST_USER_SELECT = [
+  '_id',
+  'fullName',
+  'gender',
+  'birthDate',
+  'avatar',
+  'phonePrimary',
+  'phoneSecondary',
+  'whatsappNumber',
+  'email',
+  'nationalId',
+  'familyName',
+  'houseName',
+  'ageGroup',
+  'role',
+  'accountStatus',
+  'hasLogin',
+  'loginIdentifierType',
+  'lastLoginAt',
+  'isLocked',
+  'lockReason',
+  'createdAt',
+  'updatedAt',
+  'tags',
+  'address.governorate',
+  'address.city',
+  'address.street',
+  'employment.status',
+  'education.stage',
+  'presence.status',
+  'confessionFatherName',
+  'confessionFatherUserId',
+].join(' ');
+
+const EXPLORER_USER_PROJECT = {
+  _id: 1,
+  fullName: 1,
+  gender: 1,
+  birthDate: 1,
+  avatar: 1,
+  phonePrimary: 1,
+  phoneSecondary: 1,
+  whatsappNumber: 1,
+  email: 1,
+  nationalId: 1,
+  address: 1,
+  tags: 1,
+  customDetails: 1,
+  financial: 1,
+  employment: 1,
+  presence: 1,
+  education: 1,
+  health: 1,
+  notes: 1,
+  familyName: 1,
+  houseName: 1,
+  ageGroup: 1,
+  role: 1,
+  extraPermissions: 1,
+  deniedPermissions: 1,
+  accountStatus: 1,
+  hasLogin: 1,
+  loginIdentifierType: 1,
+  lastLoginAt: 1,
+  isLocked: 1,
+  createdAt: 1,
+  updatedAt: 1,
+  confessionFatherName: 1,
+  confessionFatherUserId: 1,
+  hasFather: { $ne: ['$father', null] },
+  hasMother: { $ne: ['$mother', null] },
+  hasSpouse: { $ne: ['$spouse', null] },
+  siblingCount: { $size: { $ifNull: ['$siblings', []] } },
+  childrenCount: { $size: { $ifNull: ['$children', []] } },
+  otherFamilyCount: { $size: { $ifNull: ['$familyMembers', []] } },
+  meetingIdsCount: { $size: { $ifNull: ['$meetingIds', []] } },
+  meetingAttendanceCount: { $size: { $ifNull: ['$meetingAttendance', []] } },
+  divineAttendanceCount: { $size: { $ifNull: ['$divineLiturgyAttendance', []] } },
+  confessionSessionCount: { $size: { $ifNull: ['$confessionSessionIds', []] } },
+  lastMeetingAttendanceDate: { $max: '$meetingAttendance.attendanceDate' },
+  lastDivineAttendanceDate: { $max: '$divineLiturgyAttendance.attendanceDate' },
+  familyConnectionsCount: {
+    $add: [
+      { $cond: [{ $ne: ['$father', null] }, 1, 0] },
+      { $cond: [{ $ne: ['$mother', null] }, 1, 0] },
+      { $cond: [{ $ne: ['$spouse', null] }, 1, 0] },
+      { $size: { $ifNull: ['$siblings', []] } },
+      { $size: { $ifNull: ['$children', []] } },
+      { $size: { $ifNull: ['$familyMembers', []] } },
+    ],
+  },
+};
+
+const LIST_SORTS = new Set(['createdAt', 'updatedAt', 'fullName', 'birthDate']);
+const LIST_FIELDS = new Set(['list', 'explorer']);
+const MAX_LIST_LIMIT = 100;
+
+function escapeRegex(value = '') {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function compactString(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function buildSafeRegex(value, { prefix = false } = {}) {
+  const term = compactString(value);
+  if (!term) return null;
+  return new RegExp(`${prefix ? '^' : ''}${escapeRegex(term)}`, 'i');
+}
+
+function normalizePositiveInt(value, fallback, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, max);
+}
+
+function normalizeAggregateBuckets(items = []) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => ({
+      name: item?._id == null ? '' : String(item._id).trim(),
+      count: Number(item?.count || 0),
+    }))
+    .filter((item) => item.name && item.count > 0);
+}
+
+function normalizeRankBuckets(items = []) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => ({
+      name: item?._id == null ? '' : String(item._id).trim(),
+      count: Number(item?.count || 0),
+      lockedCount: Number(item?.lockedCount || 0),
+      loginEnabledCount: Number(item?.loginEnabledCount || 0),
+      familyCount: Number(item?.familyCount || 0),
+      houseCount: Number(item?.houseCount || 0),
+      averageAge: item?.averageAge == null ? null : Math.round(Number(item.averageAge)),
+    }))
+    .filter((item) => item.name && item.count > 0);
+}
+
+function formatYearMonth(year, month) {
+  if (!year || !month) return '';
+  return `${year}-${String(month).padStart(2, '0')}`;
+}
+
 class UserService {
   _toComparableId(value) {
     if (!value) return null;
@@ -213,19 +358,44 @@ class UserService {
   /**
    * جلب قائمة المستخدمين مع ترقيم المؤشر (Cursor Pagination)
    */
-  async listUsers({ cursor, limit = 20, sort = 'createdAt', order = 'desc', filters = {} }) {
-    const baseQuery = {};
+  async listUsers({
+    cursor,
+    page = 1,
+    limit = 20,
+    sort = 'createdAt',
+    order = 'desc',
+    fields = 'list',
+    filters = {},
+  }) {
+    const safeLimit = normalizePositiveInt(limit, 20, MAX_LIST_LIMIT);
+    const safePage = normalizePositiveInt(page, 1);
+    const safeSort = LIST_SORTS.has(sort) ? sort : 'createdAt';
+    const safeOrder = order === 'asc' ? 'asc' : 'desc';
+    const safeFields = LIST_FIELDS.has(fields) ? fields : 'list';
+    const sortDirection = safeOrder === 'desc' ? -1 : 1;
 
-    // Filters
+    const baseQuery = { isDeleted: { $ne: true } };
+
     const namePhoneOrConditions = [];
-    if (filters.fullName) {
-      namePhoneOrConditions.push({ fullName: { $regex: filters.fullName, $options: 'i' } });
+    const searchTerm = compactString(filters.search);
+    if (searchTerm) {
+      const nameRegex = buildSafeRegex(searchTerm);
+      const identifierRegex = buildSafeRegex(searchTerm, { prefix: true });
+      namePhoneOrConditions.push(
+        { fullName: nameRegex },
+        { phonePrimary: identifierRegex },
+        { phoneSecondary: identifierRegex },
+        { whatsappNumber: identifierRegex },
+        { email: identifierRegex },
+        { nationalId: identifierRegex }
+      );
+    } else {
+      const fullNameRegex = buildSafeRegex(filters.fullName);
+      const phoneRegex = buildSafeRegex(filters.phonePrimary, { prefix: true });
+      if (fullNameRegex) namePhoneOrConditions.push({ fullName: fullNameRegex });
+      if (phoneRegex) namePhoneOrConditions.push({ phonePrimary: phoneRegex });
     }
-    if (filters.phonePrimary) {
-      namePhoneOrConditions.push({
-        phonePrimary: { $regex: filters.phonePrimary, $options: 'i' },
-      });
-    }
+
     if (namePhoneOrConditions.length === 1) {
       Object.assign(baseQuery, namePhoneOrConditions[0]);
     } else if (namePhoneOrConditions.length > 1) {
@@ -235,7 +405,9 @@ class UserService {
       baseQuery.ageGroup = filters.ageGroup;
     }
     if (filters.tags) {
-      const tagsArray = Array.isArray(filters.tags) ? filters.tags : [filters.tags];
+      const tagsArray = (Array.isArray(filters.tags) ? filters.tags : [filters.tags])
+        .map((tag) => compactString(tag))
+        .filter(Boolean);
       if (tagsArray.length > 0) {
         baseQuery.tags = { $in: tagsArray };
       }
@@ -246,11 +418,13 @@ class UserService {
     if (filters.accountStatus) {
       baseQuery.accountStatus = filters.accountStatus;
     }
-    if (filters.familyName) {
-      baseQuery.familyName = { $regex: filters.familyName, $options: 'i' };
+    const familyNameRegex = buildSafeRegex(filters.familyName, { prefix: true });
+    if (familyNameRegex) {
+      baseQuery.familyName = familyNameRegex;
     }
-    if (filters.houseName) {
-      baseQuery.houseName = { $regex: filters.houseName, $options: 'i' };
+    const houseNameRegex = buildSafeRegex(filters.houseName, { prefix: true });
+    if (houseNameRegex) {
+      baseQuery.houseName = houseNameRegex;
     }
     if (filters.gender) {
       baseQuery.gender = filters.gender;
@@ -261,31 +435,64 @@ class UserService {
 
     const query = { ...baseQuery };
 
-    // Cursor-based pagination
     if (cursor) {
-      const operator = order === 'desc' ? '$lt' : '$gt';
+      const operator = safeOrder === 'desc' ? '$lt' : '$gt';
 
-      if (sort === 'createdAt' || sort === 'updatedAt' || sort === 'birthDate') {
-        query[sort] = { [operator]: new Date(cursor) };
+      if (safeSort === 'createdAt' || safeSort === 'updatedAt' || safeSort === 'birthDate') {
+        const cursorDate = new Date(cursor);
+        if (!Number.isNaN(cursorDate.getTime())) {
+          query[safeSort] = { [operator]: cursorDate };
+        }
       } else if (mongoose.Types.ObjectId.isValid(cursor)) {
         query._id = { [operator]: new mongoose.Types.ObjectId(cursor) };
       }
     }
 
-    const sortDirection = order === 'desc' ? -1 : 1;
+    const sortSpec = { [safeSort]: sortDirection, _id: sortDirection };
+    const skip = cursor ? 0 : (safePage - 1) * safeLimit;
+    const fetchLimit = safeLimit + 1;
 
-    const [totalCount, users] = await Promise.all([
+    const usersQuery =
+      safeFields === 'explorer'
+        ? User.aggregate([
+            { $match: query },
+            { $sort: sortSpec },
+            ...(skip > 0 ? [{ $skip: skip }] : []),
+            { $limit: fetchLimit },
+            { $project: EXPLORER_USER_PROJECT },
+          ])
+        : User.find(query)
+            .select(LIST_USER_SELECT)
+            .sort(sortSpec)
+            .skip(skip)
+            .limit(fetchLimit)
+            .lean();
+
+    const [total, fetchedUsers] = await Promise.all([
       User.countDocuments(baseQuery),
-      User.find(query)
-        .select('-changeLog -passwordHash -__v')
-        .sort({ [sort]: sortDirection, _id: sortDirection })
-        .limit(limit)
-        .lean(),
+      usersQuery,
     ]);
 
+    const hasMore = fetchedUsers.length > safeLimit;
+    const users = hasMore ? fetchedUsers.slice(0, safeLimit) : fetchedUsers;
+    const totalPages = Math.max(1, Math.ceil(total / safeLimit));
+    const nextCursorMeta = buildPaginationMeta(users, safeLimit, safeSort);
+    const hasNextPage = cursor ? hasMore : safePage < totalPages;
+
     const meta = {
-      ...buildPaginationMeta(users, limit, sort),
-      totalCount,
+      page: safePage,
+      limit: safeLimit,
+      total,
+      totalCount: total,
+      totalPages,
+      hasNextPage,
+      hasPrevPage: cursor ? Boolean(cursor) : safePage > 1,
+      hasMore,
+      nextCursor: hasMore ? nextCursorMeta.nextCursor : null,
+      count: users.length,
+      sort: safeSort,
+      order: safeOrder,
+      fields: safeFields,
     };
 
     return { users, meta };
@@ -320,6 +527,227 @@ class UserService {
   /**
    * إضافة وصف صلة قرابة جديد (يُخزن كـ other)
    */
+  async getFamilyHouseAnalytics() {
+    const [result = {}] = await User.aggregate([
+      { $match: { isDeleted: { $ne: true } } },
+      {
+        $project: {
+          gender: 1,
+          birthDate: 1,
+          ageGroup: 1,
+          role: 1,
+          accountStatus: 1,
+          hasLogin: 1,
+          isLocked: 1,
+          familyName: { $trim: { input: { $ifNull: ['$familyName', ''] } } },
+          houseName: { $trim: { input: { $ifNull: ['$houseName', ''] } } },
+          city: { $trim: { input: { $ifNull: ['$address.city', ''] } } },
+          governorate: { $trim: { input: { $ifNull: ['$address.governorate', ''] } } },
+          presenceStatus: '$presence.status',
+          employmentStatus: '$employment.status',
+          createdAt: 1,
+          createdYear: { $year: '$createdAt' },
+          createdMonth: { $month: '$createdAt' },
+        },
+      },
+      {
+        $addFields: {
+          hasFamilyName: { $gt: [{ $strLenCP: '$familyName' }, 0] },
+          hasHouseName: { $gt: [{ $strLenCP: '$houseName' }, 0] },
+          age: {
+            $cond: [
+              { $ifNull: ['$birthDate', false] },
+              { $dateDiff: { startDate: '$birthDate', endDate: '$$NOW', unit: 'year' } },
+              null,
+            ],
+          },
+        },
+      },
+      {
+        $facet: {
+          totals: [
+            {
+              $group: {
+                _id: null,
+                totalMembers: { $sum: 1 },
+                lockedMembers: { $sum: { $cond: ['$isLocked', 1, 0] } },
+                loginEnabledMembers: { $sum: { $cond: ['$hasLogin', 1, 0] } },
+                membersWithFamilyName: { $sum: { $cond: ['$hasFamilyName', 1, 0] } },
+                membersWithHouseName: { $sum: { $cond: ['$hasHouseName', 1, 0] } },
+                averageAge: { $avg: '$age' },
+              },
+            },
+          ],
+          familyRanks: [
+            { $match: { hasFamilyName: true } },
+            {
+              $group: {
+                _id: '$familyName',
+                count: { $sum: 1 },
+                lockedCount: { $sum: { $cond: ['$isLocked', 1, 0] } },
+                loginEnabledCount: { $sum: { $cond: ['$hasLogin', 1, 0] } },
+                houseNames: { $addToSet: '$houseName' },
+                averageAge: { $avg: '$age' },
+              },
+            },
+            {
+              $project: {
+                count: 1,
+                lockedCount: 1,
+                loginEnabledCount: 1,
+                averageAge: 1,
+                houseCount: {
+                  $size: {
+                    $filter: {
+                      input: '$houseNames',
+                      as: 'name',
+                      cond: { $gt: [{ $strLenCP: '$$name' }, 0] },
+                    },
+                  },
+                },
+              },
+            },
+            { $sort: { count: -1, _id: 1 } },
+            { $limit: 12 },
+          ],
+          familyTotals: [
+            { $match: { hasFamilyName: true } },
+            { $group: { _id: '$familyName' } },
+            { $count: 'count' },
+          ],
+          houseRanks: [
+            { $match: { hasHouseName: true } },
+            {
+              $group: {
+                _id: '$houseName',
+                count: { $sum: 1 },
+                lockedCount: { $sum: { $cond: ['$isLocked', 1, 0] } },
+                loginEnabledCount: { $sum: { $cond: ['$hasLogin', 1, 0] } },
+                familyNames: { $addToSet: '$familyName' },
+                averageAge: { $avg: '$age' },
+              },
+            },
+            {
+              $project: {
+                count: 1,
+                lockedCount: 1,
+                loginEnabledCount: 1,
+                averageAge: 1,
+                familyCount: {
+                  $size: {
+                    $filter: {
+                      input: '$familyNames',
+                      as: 'name',
+                      cond: { $gt: [{ $strLenCP: '$$name' }, 0] },
+                    },
+                  },
+                },
+              },
+            },
+            { $sort: { count: -1, _id: 1 } },
+            { $limit: 12 },
+          ],
+          houseTotals: [
+            { $match: { hasHouseName: true } },
+            { $group: { _id: '$houseName' } },
+            { $count: 'count' },
+          ],
+          ageGroups: [
+            { $match: { ageGroup: { $exists: true, $nin: [null, ''] } } },
+            { $group: { _id: '$ageGroup', count: { $sum: 1 } } },
+            { $sort: { count: -1, _id: 1 } },
+          ],
+          genders: [
+            { $match: { gender: { $exists: true, $nin: [null, ''] } } },
+            { $group: { _id: '$gender', count: { $sum: 1 } } },
+            { $sort: { count: -1, _id: 1 } },
+          ],
+          accountStatuses: [
+            { $match: { accountStatus: { $exists: true, $nin: [null, ''] } } },
+            { $group: { _id: '$accountStatus', count: { $sum: 1 } } },
+            { $sort: { count: -1, _id: 1 } },
+          ],
+          roles: [
+            { $match: { role: { $exists: true, $nin: [null, ''] } } },
+            { $group: { _id: '$role', count: { $sum: 1 } } },
+            { $sort: { count: -1, _id: 1 } },
+          ],
+          presenceStatuses: [
+            { $match: { presenceStatus: { $exists: true, $nin: [null, ''] } } },
+            { $group: { _id: '$presenceStatus', count: { $sum: 1 } } },
+            { $sort: { count: -1, _id: 1 } },
+          ],
+          employmentStatuses: [
+            { $match: { employmentStatus: { $exists: true, $nin: [null, ''] } } },
+            { $group: { _id: '$employmentStatus', count: { $sum: 1 } } },
+            { $sort: { count: -1, _id: 1 } },
+          ],
+          cityRanks: [
+            { $match: { city: { $ne: '' } } },
+            { $group: { _id: '$city', count: { $sum: 1 } } },
+            { $sort: { count: -1, _id: 1 } },
+            { $limit: 10 },
+          ],
+          governorateRanks: [
+            { $match: { governorate: { $ne: '' } } },
+            { $group: { _id: '$governorate', count: { $sum: 1 } } },
+            { $sort: { count: -1, _id: 1 } },
+            { $limit: 10 },
+          ],
+          monthlyTrend: [
+            { $match: { createdAt: { $type: 'date' } } },
+            { $group: { _id: { year: '$createdYear', month: '$createdMonth' }, count: { $sum: 1 } } },
+            { $sort: { '_id.year': -1, '_id.month': -1 } },
+            { $limit: 12 },
+            { $sort: { '_id.year': 1, '_id.month': 1 } },
+          ],
+        },
+      },
+    ]);
+
+    const totals = result.totals?.[0] || {};
+    const totalMembers = Number(totals.totalMembers || 0);
+    const membersWithFamilyName = Number(totals.membersWithFamilyName || 0);
+    const membersWithHouseName = Number(totals.membersWithHouseName || 0);
+    const familyRanks = normalizeRankBuckets(result.familyRanks);
+    const houseRanks = normalizeRankBuckets(result.houseRanks);
+
+    return {
+      summary: {
+        totalMembers,
+        totalFamilies: Number(result.familyTotals?.[0]?.count || 0),
+        totalHouses: Number(result.houseTotals?.[0]?.count || 0),
+        lockedMembers: Number(totals.lockedMembers || 0),
+        loginEnabledMembers: Number(totals.loginEnabledMembers || 0),
+        membersWithFamilyName,
+        membersWithHouseName,
+        familyCoveragePct: totalMembers ? Math.round((membersWithFamilyName / totalMembers) * 100) : 0,
+        houseCoveragePct: totalMembers ? Math.round((membersWithHouseName / totalMembers) * 100) : 0,
+        averageAge: totals.averageAge == null ? null : Math.round(Number(totals.averageAge)),
+      },
+      familyRanks,
+      houseRanks,
+      distributions: {
+        ageGroups: normalizeAggregateBuckets(result.ageGroups),
+        genders: normalizeAggregateBuckets(result.genders),
+        accountStatuses: normalizeAggregateBuckets(result.accountStatuses),
+        roles: normalizeAggregateBuckets(result.roles),
+        presenceStatuses: normalizeAggregateBuckets(result.presenceStatuses),
+        employmentStatuses: normalizeAggregateBuckets(result.employmentStatuses),
+        cities: normalizeAggregateBuckets(result.cityRanks),
+        governorates: normalizeAggregateBuckets(result.governorateRanks),
+      },
+      trends: {
+        monthlyRegistrations: (result.monthlyTrend || [])
+          .map((item) => ({
+            label: formatYearMonth(item?._id?.year, item?._id?.month),
+            count: Number(item?.count || 0),
+          }))
+          .filter((item) => item.label),
+      },
+    };
+  }
+
   async createRelationRole(label) {
     const trimmed = (label || '').trim();
     if (!trimmed) throw ApiError.badRequest('وصف صلة القرابة مطلوب', 'VALIDATION_ERROR');

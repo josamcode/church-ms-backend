@@ -50,6 +50,14 @@ const getRelationRoles = asyncHandler(async (req, res) => {
   });
 });
 
+const getFamilyHouseAnalytics = asyncHandler(async (req, res) => {
+  const analytics = await userService.getFamilyHouseAnalytics();
+  return ApiResponse.success(res, {
+    message: 'Family and house analytics loaded successfully',
+    data: analytics,
+  });
+});
+
 const createRelationRole = asyncHandler(async (req, res) => {
   const role = await userService.createRelationRole(req.body.label);
   return ApiResponse.created(res, {
@@ -59,7 +67,7 @@ const createRelationRole = asyncHandler(async (req, res) => {
 });
 
 const listUsers = asyncHandler(async (req, res) => {
-  const { cursor, limit, sort, order, ...filters } = req.query;
+  const { cursor, page, limit, sort, order, fields, ...filters } = req.query;
 
   if (filters.tags && typeof filters.tags === 'string') {
     filters.tags = filters.tags.split(',').map((t) => t.trim());
@@ -67,9 +75,11 @@ const listUsers = asyncHandler(async (req, res) => {
 
   const { users, meta } = await userService.listUsers({
     cursor,
+    page: parseInt(page, 10) || 1,
     limit: parseInt(limit, 10) || 20,
     sort: sort || 'createdAt',
     order: order || 'desc',
+    fields: fields || 'list',
     filters,
   });
 
@@ -167,6 +177,7 @@ module.exports = {
   getHouseNames,
   getProfileOptionValues,
   getRelationRoles,
+  getFamilyHouseAnalytics,
   createRelationRole,
   listUsers,
   getUser,

@@ -77,6 +77,13 @@ router.get(
   userController.getRelationRoles
 );
 
+router.get(
+  '/family-house-analytics',
+  authenticateJWT,
+  authorizePermissions(PERMISSIONS.USERS_VIEW),
+  userController.getFamilyHouseAnalytics
+);
+
 router.post(
   '/relation-roles',
   authenticateJWT,

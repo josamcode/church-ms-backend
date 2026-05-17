@@ -224,12 +224,15 @@ const updateUser = {
 const listUsers = {
   query: Joi.object({
     cursor: Joi.string().optional(),
+    page: Joi.number().integer().min(1).default(1),
     limit: Joi.number().integer().min(1).max(100).default(20).messages({
       'number.min': 'الحد الأدنى للنتائج هو 1',
       'number.max': 'الحد الأقصى للنتائج هو 100',
     }),
-    sort: Joi.string().valid('createdAt', 'fullName', 'birthDate').default('createdAt'),
+    sort: Joi.string().valid('createdAt', 'updatedAt', 'fullName', 'birthDate').default('createdAt'),
     order: Joi.string().valid('asc', 'desc').default('desc'),
+    fields: Joi.string().valid('list', 'explorer').default('list'),
+    search: Joi.string().trim().max(100).optional(),
     fullName: Joi.string().trim().optional(),
     phonePrimary: Joi.string().trim().optional(),
     ageGroup: Joi.string()
