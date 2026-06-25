@@ -239,6 +239,10 @@ const listUsers = {
     order: Joi.string().valid('asc', 'desc').default('desc'),
     fields: Joi.string().valid('list', 'explorer').default('list'),
     search: Joi.string().trim().max(100).optional(),
+    q: Joi.string().trim().max(100).optional(),
+    keyword: Joi.string().trim().max(100).optional(),
+    name: Joi.string().trim().max(100).optional(),
+    displayName: Joi.string().trim().max(100).optional(),
     fullName: Joi.string().trim().optional(),
     phonePrimary: Joi.string().trim().optional(),
     ageGroup: Joi.string()

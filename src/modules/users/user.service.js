@@ -112,6 +112,17 @@ const EXPLORER_USER_PROJECT = {
 const LIST_SORTS = new Set(['createdAt', 'updatedAt', 'fullName', 'birthDate']);
 const LIST_FIELDS = new Set(['list', 'explorer']);
 const MAX_LIST_LIMIT = 100;
+const ARABIC_DIACRITICS_PATTERN = /[ً-ٰٟـ]/g;
+const ARABIC_DIACRITICS_REGEX_FRAGMENT = '[ً-ٰٟـ]*';
+const ARABIC_TITLE_WORDS = new Set([
+  'القس',
+  'قس',
+  'القمص',
+  'قمص',
+  'ابونا',
+  'الاب',
+  'اب',
+]);
 
 function escapeRegex(value = '') {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -119,6 +130,76 @@ function escapeRegex(value = '') {
 
 function compactString(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeArabicSearchText(value = '') {
+  return compactString(value)
+    .replace(ARABIC_DIACRITICS_PATTERN, '')
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ؤ/g, 'و')
+    .replace(/ئ/g, 'ي')
+    .replace(/ة/g, 'ه')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildArabicFlexibleRegex(value, { prefix = false } = {}) {
+  const normalized = normalizeArabicSearchText(value);
+  if (!normalized) return null;
+
+  const chars = Array.from(normalized);
+  let pattern = prefix ? '^' : '';
+
+  chars.forEach((char) => {
+    if (/\s/.test(char)) {
+      pattern += '\\s*';
+      return;
+    }
+
+    if (char === 'ا') {
+      pattern += '[اأإآٱ]';
+    } else if (char === 'ي') {
+      pattern += '[يىئ]';
+    } else if (char === 'و') {
+      pattern += '[وؤ]';
+    } else if (char === 'ه') {
+      pattern += '[هة]';
+    } else {
+      pattern += escapeRegex(char);
+    }
+
+    pattern += ARABIC_DIACRITICS_REGEX_FRAGMENT;
+  });
+
+  return new RegExp(pattern, 'i');
+}
+
+function getNameSearchTokens(value = '') {
+  const normalized = normalizeArabicSearchText(value).replace(/(^|\s)عبد(?=\S)/g, '$1عبد ');
+  if (!normalized) return [];
+
+  return normalized
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token && !ARABIC_TITLE_WORDS.has(token));
+}
+
+function buildNameSearchCondition(value = '') {
+  const tokens = getNameSearchTokens(value);
+
+  if (tokens.length > 0) {
+    const tokenConditions = tokens
+      .map((token) => buildArabicFlexibleRegex(token))
+      .filter(Boolean)
+      .map((regex) => ({ fullName: regex }));
+
+    if (tokenConditions.length === 1) return tokenConditions[0];
+    if (tokenConditions.length > 1) return { $and: tokenConditions };
+  }
+
+  const fallbackRegex = buildSafeRegex(value);
+  return fallbackRegex ? { fullName: fallbackRegex } : null;
 }
 
 function buildSafeRegex(value, { prefix = false } = {}) {
@@ -380,22 +461,28 @@ class UserService {
     const baseQuery = { isDeleted: { $ne: true } };
 
     const namePhoneOrConditions = [];
-    const searchTerm = compactString(filters.search);
+    const searchTerm = compactString(
+      filters.search || filters.q || filters.keyword || filters.name || filters.displayName
+    );
     if (searchTerm) {
-      const nameRegex = buildSafeRegex(searchTerm);
       const identifierRegex = buildSafeRegex(searchTerm, { prefix: true });
+      const nameCondition = buildNameSearchCondition(searchTerm);
+      if (nameCondition) {
+        namePhoneOrConditions.push(nameCondition);
+      }
       namePhoneOrConditions.push(
-        { fullName: nameRegex },
         { phonePrimary: identifierRegex },
         { phoneSecondary: identifierRegex },
         { whatsappNumber: identifierRegex },
         { email: identifierRegex },
-        { nationalId: identifierRegex }
+        { nationalId: identifierRegex },
+        { familyName: buildArabicFlexibleRegex(searchTerm) || buildSafeRegex(searchTerm) },
+        { houseName: buildArabicFlexibleRegex(searchTerm) || buildSafeRegex(searchTerm) }
       );
     } else {
-      const fullNameRegex = buildSafeRegex(filters.fullName);
+      const fullNameCondition = buildNameSearchCondition(filters.fullName);
       const phoneRegex = buildSafeRegex(filters.phonePrimary, { prefix: true });
-      if (fullNameRegex) namePhoneOrConditions.push({ fullName: fullNameRegex });
+      if (fullNameCondition) namePhoneOrConditions.push(fullNameCondition);
       if (phoneRegex) namePhoneOrConditions.push({ phonePrimary: phoneRegex });
     }
 
@@ -480,7 +567,9 @@ class UserService {
     const users = hasMore ? fetchedUsers.slice(0, safeLimit) : fetchedUsers;
     const totalPages = Math.max(1, Math.ceil(total / safeLimit));
     const nextCursorMeta = buildPaginationMeta(users, safeLimit, safeSort);
-    const hasNextPage = cursor ? hasMore : safePage < totalPages;
+    const nextCursor = hasMore ? nextCursorMeta.nextCursor : null;
+    const repeatedCursor = Boolean(cursor && nextCursor && nextCursor === cursor);
+    const hasNextPage = !repeatedCursor && (cursor ? hasMore : safePage < totalPages);
 
     const meta = {
       page: safePage,
@@ -491,7 +580,7 @@ class UserService {
       hasNextPage,
       hasPrevPage: cursor ? Boolean(cursor) : safePage > 1,
       hasMore,
-      nextCursor: hasMore ? nextCursorMeta.nextCursor : null,
+      nextCursor: repeatedCursor ? null : nextCursor,
       count: users.length,
       sort: safeSort,
       order: safeOrder,
