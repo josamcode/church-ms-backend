@@ -10,10 +10,8 @@ const pushService = require('./push.service');
 const User = require('../users/user.model');
 const platformSettingsService = require('../settings/platformSettings.service');
 const { PERMISSIONS } = require('../../constants/permissions');
-const {
-  uploadBufferToCloudinary,
-  validateImageUpload,
-} = require('../../utils/fileUploads');
+const { validateImageUpload } = require('../../utils/fileUploads');
+const storageService = require('../../services/storage/storage.service');
 
 const { seedDefaultNotificationTypes } = NotificationType;
 
@@ -121,6 +119,10 @@ class NotificationsService {
         : [],
       eventDate: notification.eventDate || null,
       coverImageUrl: notification.coverImageUrl || '',
+      coverImageStorageKey: notification.coverImageStorageKey || '',
+      coverImageProvider: notification.coverImageProvider || '',
+      coverImageMimeType: notification.coverImageMimeType || '',
+      coverImageSize: Number(notification.coverImageSize) || 0,
       isActive: notification.isActive !== false,
       audienceType: notification.audienceType || 'all',
       audiencePermissions: Array.isArray(notification.audiencePermissions)
@@ -348,22 +350,20 @@ class NotificationsService {
     return this._mapType(created);
   }
 
-  async uploadImageToCloudinary(file) {
-    validateImageUpload(file, { emptyLabel: 'image' });
-
-    const uploadResult = await uploadBufferToCloudinary(
-      file,
-      {
-        folder: 'church/notifications',
-        resource_type: 'image',
-        transformation: [{ quality: 'auto', fetch_format: 'auto' }],
-      },
-      'Failed to upload notification image'
-    );
+  async uploadImageToStorage(file) {
+    const fileDetails = validateImageUpload(file, { emptyLabel: 'image' });
+    const uploadResult = await storageService.uploadFile(file, {
+      prefix: 'notifications/images',
+      fileDetails,
+      failureMessage: 'Failed to upload notification image',
+    });
 
     return {
-      url: uploadResult.secure_url,
-      publicId: uploadResult.public_id,
+      url: uploadResult.url,
+      storageKey: uploadResult.storageKey,
+      provider: uploadResult.provider,
+      mimeType: uploadResult.mimeType,
+      size: uploadResult.size,
     };
   }
 
@@ -445,6 +445,10 @@ class NotificationsService {
       details: payload.details || [],
       eventDate: payload.eventDate ? new Date(payload.eventDate) : undefined,
       coverImageUrl: payload.coverImageUrl || undefined,
+      coverImageStorageKey: payload.coverImageStorageKey || undefined,
+      coverImageProvider: payload.coverImageProvider || undefined,
+      coverImageMimeType: payload.coverImageMimeType || undefined,
+      coverImageSize: Number(payload.coverImageSize) || undefined,
       isActive: payload.isActive !== undefined ? payload.isActive : true,
       audienceType: audience.audienceType,
       audiencePermissions: audience.audiencePermissions,
@@ -534,7 +538,16 @@ class NotificationsService {
     }
 
     if (payload.coverImageUrl !== undefined) {
+      const previousStorageKey = notification.coverImageStorageKey || '';
       notification.coverImageUrl = payload.coverImageUrl || undefined;
+      notification.coverImageStorageKey = payload.coverImageStorageKey || undefined;
+      notification.coverImageProvider = payload.coverImageProvider || undefined;
+      notification.coverImageMimeType = payload.coverImageMimeType || undefined;
+      notification.coverImageSize = Number(payload.coverImageSize) || undefined;
+
+      if (previousStorageKey && previousStorageKey !== notification.coverImageStorageKey) {
+        await storageService.deleteFile(previousStorageKey);
+      }
     }
 
     if (payload.isActive !== undefined) {

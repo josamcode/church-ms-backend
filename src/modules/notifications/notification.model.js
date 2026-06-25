@@ -70,6 +70,25 @@ const notificationSchema = new mongoose.Schema(
       trim: true,
       maxlength: 2000,
     },
+    coverImageStorageKey: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+    },
+    coverImageProvider: {
+      type: String,
+      trim: true,
+      maxlength: 40,
+    },
+    coverImageMimeType: {
+      type: String,
+      trim: true,
+      maxlength: 160,
+    },
+    coverImageSize: {
+      type: Number,
+      min: 0,
+    },
     isActive: {
       type: Boolean,
       default: true,

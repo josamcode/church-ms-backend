@@ -12,10 +12,25 @@ const archivePhotoSchema = new mongoose.Schema(
       trim: true,
       required: true,
     },
-    publicId: {
+    storageKey: {
       type: String,
       trim: true,
       default: null,
+    },
+    provider: {
+      type: String,
+      trim: true,
+      default: 'r2',
+    },
+    mimeType: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    size: {
+      type: Number,
+      min: 0,
+      default: 0,
     },
     caption: {
       type: String,

@@ -5,7 +5,7 @@
 1. **Node.js** الإصدار 18 أو أحدث
 2. **MongoDB** مُشغّل محلياً أو عبر Atlas
 3. **Redis** مُشغّل محلياً أو عبر خدمة سحابية
-4. **حساب Cloudinary** لرفع الصور (مجاني)
+4. **حساب Cloudflare R2** لرفع الصور (مجاني)
 
 ---
 
@@ -34,9 +34,14 @@ REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 JWT_ACCESS_SECRET=مفتاح_سري_طويل_وعشوائي_هنا
 JWT_REFRESH_SECRET=مفتاح_سري_آخر_طويل_وعشوائي
-CLOUDINARY_CLOUD_NAME=اسم_حسابك
-CLOUDINARY_API_KEY=مفتاح_API
-CLOUDINARY_API_SECRET=المفتاح_السري
+R2_ACCOUNT_ID=اسم_حسابك
+R2_ACCESS_KEY_ID=مفتاح_API
+R2_SECRET_ACCESS_KEY=المفتاح_السري
+R2_BUCKET_NAME=church-uploads
+R2_PUBLIC_BASE_URL=https://uploads.example.com
+R2_REGION=auto
+R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+R2_REQUIRED=false
 ```
 
 ### 4. تشغيل الخادم
@@ -133,3 +138,5 @@ http://localhost:5000/api
 ```
 
 جميع نقاط النهاية تبدأ بـ `/api/`.
+
+

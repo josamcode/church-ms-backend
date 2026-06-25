@@ -31,7 +31,7 @@ const createPublicBooking = asyncHandler(async (req, res) => {
 });
 
 const uploadPublicImage = asyncHandler(async (req, res) => {
-  const image = await bookingsService.uploadImageToCloudinary(req.file, req.body);
+  const image = await bookingsService.uploadImageToStorage(req.file, req.body);
   return ApiResponse.success(res, {
     message: 'Booking image uploaded successfully',
     data: image,

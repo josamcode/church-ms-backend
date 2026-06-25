@@ -18,7 +18,10 @@ const localizedTextSchema = new mongoose.Schema(
 const heroImageSchema = new mongoose.Schema(
   {
     url: { type: String, trim: true },
-    publicId: { type: String, trim: true },
+    storageKey: { type: String, trim: true },
+    provider: { type: String, trim: true, default: 'r2' },
+    mimeType: { type: String, trim: true, default: '' },
+    size: { type: Number, min: 0, default: 0 },
   },
   { _id: false }
 );
@@ -176,4 +179,3 @@ const landingContentSchema = new mongoose.Schema(
 const LandingContent = mongoose.model('LandingContent', landingContentSchema);
 
 module.exports = LandingContent;
-

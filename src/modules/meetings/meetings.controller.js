@@ -175,7 +175,7 @@ const updateMeetingDocumentationSettings = asyncHandler(async (req, res) => {
 });
 
 const uploadMeetingDocumentationAsset = asyncHandler(async (req, res) => {
-  const asset = await meetingsService.uploadDocumentationAssetToCloudinary(req.file, {
+  const asset = await meetingsService.uploadDocumentationAssetToStorage(req.file, {
     meetingId: req.body.meetingId,
     documentationDate: req.body.documentationDate,
     actorUserId: req.user.id,
@@ -316,7 +316,7 @@ const getServantHistory = asyncHandler(async (req, res) => {
 });
 
 const uploadSectorAvatarImage = asyncHandler(async (req, res) => {
-  const avatar = await meetingsService.uploadImageToCloudinary(req.file);
+  const avatar = await meetingsService.uploadImageToStorage(req.file);
   return ApiResponse.success(res, {
     message: 'Sector avatar uploaded successfully',
     data: avatar,
@@ -324,7 +324,7 @@ const uploadSectorAvatarImage = asyncHandler(async (req, res) => {
 });
 
 const uploadMeetingAvatarImage = asyncHandler(async (req, res) => {
-  const avatar = await meetingsService.uploadImageToCloudinary(req.file);
+  const avatar = await meetingsService.uploadImageToStorage(req.file);
   return ApiResponse.success(res, {
     message: 'Meeting avatar uploaded successfully',
     data: avatar,

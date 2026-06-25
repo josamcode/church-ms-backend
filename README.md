@@ -7,7 +7,7 @@
 - **Node.js** + **Express** — إطار العمل الأساسي
 - **MongoDB** (Mongoose) — قاعدة البيانات
 - **Redis** (ioredis) — التخزين المؤقت، تحديد المعدل، القائمة السوداء للرموز
-- **Cloudinary** — رفع الوسائط (الصور الشخصية)
+- **Cloudflare R2** — رفع الوسائط (الصور الشخصية)
 - **JWT** — المصادقة (رمز وصول + رمز تحديث)
 
 جميع الرسائل والاستجابات وأخطاء التحقق باللغة **العربية**.
@@ -52,9 +52,14 @@ cp .env.example .env
 | `REDIS_HOST` / `REDIS_PORT` | إعدادات Redis                              |
 | `JWT_ACCESS_SECRET`         | مفتاح سري لرمز الوصول (غيّره في الإنتاج!)  |
 | `JWT_REFRESH_SECRET`        | مفتاح سري لرمز التحديث (غيّره في الإنتاج!) |
-| `CLOUDINARY_CLOUD_NAME`     | اسم حساب Cloudinary                        |
-| `CLOUDINARY_API_KEY`        | مفتاح API لـ Cloudinary                    |
-| `CLOUDINARY_API_SECRET`     | المفتاح السري لـ Cloudinary                |
+| `R2_ACCOUNT_ID`     | اسم حساب Cloudflare R2                        |
+| `R2_ACCESS_KEY_ID`        | مفتاح API لـ Cloudflare R2                    |
+| `R2_SECRET_ACCESS_KEY`     | المفتاح السري لـ Cloudflare R2                |
+| `R2_BUCKET_NAME`             | Cloudflare R2 bucket name                    |
+| `R2_PUBLIC_BASE_URL`        | Public base URL or custom domain for files   |
+| `R2_REGION`                 | R2 region, usually `auto`                    |
+| `R2_ENDPOINT`               | S3-compatible R2 endpoint                    |
+| `R2_REQUIRED`               | Set `true` when uploads must be enabled      |
 
 ### 4. تشغيل الخادم
 
@@ -92,7 +97,7 @@ src/
 │   ├── env.js                # متغيرات البيئة
 │   ├── db.js                 # اتصال MongoDB
 │   ├── redis.js              # اتصال Redis
-│   └── cloudinary.js         # إعداد Cloudinary
+│   └── r2.js         # إعداد Cloudflare R2
 ├── constants/
 │   ├── roles.js              # الأدوار (SUPER_ADMIN, ADMIN, USER)
 │   ├── permissions.js        # الصلاحيات وربطها بالأدوار
@@ -235,3 +240,5 @@ src/
 ## الترخيص
 
 ISC
+
+

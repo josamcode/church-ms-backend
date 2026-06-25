@@ -221,7 +221,10 @@ const userSchema = new mongoose.Schema(
     },
     avatar: {
       url: { type: String },
-      publicId: { type: String },
+      storageKey: { type: String },
+      provider: { type: String },
+      mimeType: { type: String },
+      size: { type: Number, min: 0 },
     },
     divineLiturgyAttendance: {
       type: [divineLiturgyAttendanceEntrySchema],

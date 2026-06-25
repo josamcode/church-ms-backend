@@ -90,17 +90,30 @@ const allowedCorsOrigins =
       ? ['http://localhost:3000', 'http://127.0.0.1:3000']
       : [];
 
-const cloudinary = {
-  cloudName: process.env.CLOUDINARY_CLOUD_NAME || '',
-  apiKey: process.env.CLOUDINARY_API_KEY || '',
-  apiSecret: process.env.CLOUDINARY_API_SECRET || '',
+const r2 = {
+  accountId: String(process.env.R2_ACCOUNT_ID || '').trim(),
+  accessKeyId: String(process.env.R2_ACCESS_KEY_ID || '').trim(),
+  secretAccessKey: String(process.env.R2_SECRET_ACCESS_KEY || ''),
+  bucketName: String(process.env.R2_BUCKET_NAME || '').trim(),
+  publicBaseUrl: String(process.env.R2_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, ''),
+  region: String(process.env.R2_REGION || 'auto').trim() || 'auto',
+  endpoint: String(process.env.R2_ENDPOINT || '').trim(),
 };
-const cloudinaryCredentialsCount = [cloudinary.cloudName, cloudinary.apiKey, cloudinary.apiSecret]
-  .filter(Boolean).length;
-const cloudinaryEnabled = cloudinaryCredentialsCount === 3;
+r2.endpoint = r2.endpoint || (r2.accountId ? `https://${r2.accountId}.r2.cloudflarestorage.com` : '');
 
-if (cloudinaryCredentialsCount > 0 && cloudinaryCredentialsCount < 3) {
-  throw new Error('Cloudinary configuration is incomplete. Provide all required credentials.');
+const r2RequiredFields = [
+  r2.accountId,
+  r2.accessKeyId,
+  r2.secretAccessKey,
+  r2.bucketName,
+  r2.publicBaseUrl,
+  r2.endpoint,
+];
+const r2CredentialsCount = r2RequiredFields.filter(Boolean).length;
+const r2Enabled = r2CredentialsCount === r2RequiredFields.length;
+
+if (r2CredentialsCount > 0 && !r2Enabled) {
+  throw new Error('R2 configuration is incomplete. Provide all required R2 settings.');
 }
 
 const backupEnabled = parseBoolean(process.env.BACKUP_ENABLED, false);
@@ -197,10 +210,10 @@ const config = {
       parseInteger(process.env.JWT_REFRESH_EXPIRES_IN_MS, 7 * 24 * 60 * 60 * 1000),
   },
 
-  cloudinary: {
-    ...cloudinary,
-    enabled: cloudinaryEnabled,
-    required: parseBoolean(process.env.CLOUDINARY_REQUIRED, isProduction),
+  r2: {
+    ...r2,
+    enabled: r2Enabled,
+    required: parseBoolean(process.env.R2_REQUIRED, isProduction),
   },
 
   cors: {
@@ -337,8 +350,8 @@ if (config.redis.required && !(config.redis.url || config.redis.host)) {
   throw new Error('Redis is required in this environment. Set REDIS_URL or REDIS_HOST.');
 }
 
-if (config.cloudinary.required && !config.cloudinary.enabled) {
-  throw new Error('Cloudinary is required in this environment. Configure all Cloudinary secrets.');
+if (config.r2.required && !config.r2.enabled) {
+  throw new Error('R2 storage is required in this environment. Configure all R2 settings.');
 }
 
 if (config.mail.enabled) {

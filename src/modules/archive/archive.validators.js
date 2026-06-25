@@ -22,7 +22,10 @@ const optionalObjectId = Joi.alternatives()
 
 const photoSchema = Joi.object({
   url: Joi.string().uri().max(2000).required(),
-  publicId: Joi.string().trim().max(400).allow('', null).default(null),
+  storageKey: Joi.string().trim().max(500).allow('', null).default(null),
+  provider: Joi.string().trim().max(40).allow('', null).default('r2'),
+  mimeType: Joi.string().trim().max(160).allow('', null).default(''),
+  size: Joi.number().integer().min(0).default(0),
   caption: Joi.string().trim().max(240).allow('').default(''),
 });
 

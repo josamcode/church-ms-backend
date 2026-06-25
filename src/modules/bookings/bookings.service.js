@@ -4,10 +4,8 @@ const logger = require('../../utils/logger');
 const ApiError = require('../../utils/ApiError');
 const BookingType = require('./bookingType.model');
 const Booking = require('./booking.model');
-const {
-  uploadBufferToCloudinary,
-  validateImageUpload,
-} = require('../../utils/fileUploads');
+const { validateImageUpload } = require('../../utils/fileUploads');
+const storageService = require('../../services/storage/storage.service');
 
 const { AVAILABILITY_MODES, FIELD_TYPES } = BookingType;
 const { BOOKING_STATUSES } = Booking;
@@ -629,7 +627,10 @@ class BookingsService {
         }
         return {
           url: String(value.url).trim(),
-          publicId: value.publicId ? String(value.publicId).trim() : '',
+          storageKey: value.storageKey ? String(value.storageKey).trim() : '',
+          provider: value.provider ? String(value.provider).trim() : 'r2',
+          mimeType: value.mimeType ? String(value.mimeType).trim() : '',
+          size: Number(value.size) || 0,
         };
       }
 
@@ -931,25 +932,24 @@ class BookingsService {
     return this.getBookingById(booking._id);
   }
 
-  async uploadImageToCloudinary(file, { bookingTypeId, fieldKey } = {}) {
-    validateImageUpload(file, { emptyLabel: 'image' });
+  async uploadImageToStorage(file, { bookingTypeId, fieldKey } = {}) {
+    const fileDetails = validateImageUpload(file, { emptyLabel: 'image' });
 
     const type = await this._resolveBookableType(bookingTypeId);
     this._resolvePublicImageField(type, fieldKey);
 
-    const uploadResult = await uploadBufferToCloudinary(
-      file,
-      {
-        folder: `church/bookings/${String(type._id)}/${fieldKey}`,
-        resource_type: 'image',
-        transformation: [{ quality: 'auto', fetch_format: 'auto' }],
-      },
-      'Failed to upload booking image'
-    );
+    const uploadResult = await storageService.uploadFile(file, {
+      prefix: `bookings/${String(type._id)}/${fieldKey}`,
+      fileDetails,
+      failureMessage: 'Failed to upload booking image',
+    });
 
     return {
-      url: uploadResult.secure_url,
-      publicId: uploadResult.public_id,
+      url: uploadResult.url,
+      storageKey: uploadResult.storageKey,
+      provider: uploadResult.provider,
+      mimeType: uploadResult.mimeType,
+      size: uploadResult.size,
     };
   }
 }

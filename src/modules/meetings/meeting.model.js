@@ -6,7 +6,10 @@ const {
 const avatarSchema = new mongoose.Schema(
   {
     url: { type: String, trim: true },
-    publicId: { type: String, trim: true },
+    storageKey: { type: String, trim: true },
+    provider: { type: String, trim: true, default: 'r2' },
+    mimeType: { type: String, trim: true, default: '' },
+    size: { type: Number, min: 0, default: 0 },
   },
   { _id: false }
 );

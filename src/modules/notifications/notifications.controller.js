@@ -19,7 +19,7 @@ const createNotificationType = asyncHandler(async (req, res) => {
 });
 
 const uploadNotificationImage = asyncHandler(async (req, res) => {
-  const image = await notificationsService.uploadImageToCloudinary(req.file);
+  const image = await notificationsService.uploadImageToStorage(req.file);
   return ApiResponse.success(res, {
     message: 'Notification image uploaded successfully',
     data: image,

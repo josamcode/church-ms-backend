@@ -24,12 +24,16 @@ const meetingReminderTemplateSchema = Joi.object({
 
 const avatarSchema = Joi.object({
   url: Joi.string().uri().required(),
-  publicId: Joi.string().trim().allow('', null).optional(),
+  storageKey: Joi.string().trim().allow('', null).optional(),
+  provider: Joi.string().trim().allow('', null).optional(),
+  mimeType: Joi.string().trim().allow('', null).optional(),
+  size: Joi.number().integer().min(0).optional(),
 }).optional();
 
 const documentationAssetSchema = Joi.object({
   url: Joi.string().uri().required(),
-  publicId: Joi.string().trim().allow('', null).optional(),
+  storageKey: Joi.string().trim().allow('', null).optional(),
+  provider: Joi.string().trim().allow('', null).optional(),
   originalName: Joi.string().trim().max(260).allow('', null).optional(),
   mimeType: Joi.string().trim().max(160).allow('', null).optional(),
   kind: Joi.string()
@@ -37,6 +41,7 @@ const documentationAssetSchema = Joi.object({
     .required(),
   resourceType: Joi.string().valid('image', 'video', 'raw').required(),
   bytes: Joi.number().integer().min(0).optional(),
+  size: Joi.number().integer().min(0).optional(),
 });
 
 const personLinkSchema = Joi.object({

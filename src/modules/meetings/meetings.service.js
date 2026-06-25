@@ -23,10 +23,10 @@ const {
 } = require('./meetingDocumentationConfig.model');
 const platformSettingsService = require('../settings/platformSettings.service');
 const {
-  uploadBufferToCloudinary,
   validateDocumentationUpload,
   validateImageUpload,
 } = require('../../utils/fileUploads');
+const storageService = require('../../services/storage/storage.service');
 
 class MeetingsService {
   _toObjectId(id, fieldName = 'id') {
@@ -1039,23 +1039,22 @@ class MeetingsService {
     });
   }
 
-  async uploadImageToCloudinary(file) {
-    validateImageUpload(file, { emptyLabel: 'image' });
+  async uploadImageToStorage(file) {
+    const fileDetails = validateImageUpload(file, { emptyLabel: 'image' });
 
-    const result = await uploadBufferToCloudinary(
-      file,
-      {
-        folder: 'church/meeting-avatars',
-        resource_type: 'image',
-        transformation: [
-          { width: 400, height: 400, crop: 'fill', gravity: 'auto' },
-          { quality: 'auto', fetch_format: 'auto' },
-        ],
-      },
-      'Failed to upload image'
-    );
+    const result = await storageService.uploadFile(file, {
+      prefix: 'meetings/avatars',
+      fileDetails,
+      failureMessage: 'Failed to upload image',
+    });
 
-    return { url: result.secure_url, publicId: result.public_id };
+    return {
+      url: result.url,
+      storageKey: result.storageKey,
+      provider: result.provider,
+      mimeType: result.mimeType,
+      size: result.size,
+    };
   }
 
   _resolveDocumentationAssetUploadConfig(fileDetails, meetingId, documentationDate) {
@@ -1112,7 +1111,7 @@ class MeetingsService {
     );
   }
 
-  async uploadDocumentationAssetToCloudinary(
+  async uploadDocumentationAssetToStorage(
     file,
     { meetingId, documentationDate, actorUserId, userPermissions = [] } = {}
   ) {
@@ -1128,25 +1127,22 @@ class MeetingsService {
       normalizedDocumentationDate
     );
 
-    const result = await uploadBufferToCloudinary(
-      file,
-      {
-        folder: uploadConfig.folder,
-        resource_type: uploadConfig.resourceType,
-        use_filename: true,
-        unique_filename: true,
-      },
-      'Failed to upload documentation file'
-    );
+    const result = await storageService.uploadFile(file, {
+      prefix: uploadConfig.folder,
+      fileDetails,
+      failureMessage: 'Failed to upload documentation file',
+    });
 
     return {
-      url: result.secure_url,
-      publicId: result.public_id,
+      url: result.url,
+      storageKey: result.storageKey,
+      provider: result.provider,
       originalName: fileDetails.originalName || '',
       mimeType: fileDetails.mimeType || '',
       kind: uploadConfig.kind,
       resourceType: uploadConfig.resourceType,
       bytes: fileDetails.size || 0,
+      size: fileDetails.size || 0,
     };
   }
 
@@ -1221,6 +1217,7 @@ class MeetingsService {
 
     const userIds = this._extractPayloadUserIds(payload);
     const userMap = await this._buildUserMap(userIds);
+    const previousAvatarStorageKey = sector.avatar?.storageKey || '';
 
     if (payload.name !== undefined) sector.name = payload.name;
     if (payload.avatar !== undefined) sector.avatar = payload.avatar || undefined;
@@ -1229,6 +1226,14 @@ class MeetingsService {
 
     sector.updatedBy = actorUserId;
     await sector.save();
+
+    if (
+      payload.avatar !== undefined &&
+      previousAvatarStorageKey &&
+      previousAvatarStorageKey !== sector.avatar?.storageKey
+    ) {
+      await storageService.deleteFile(previousAvatarStorageKey);
+    }
 
     const populated = await Sector.findById(sector._id)
       .populate('officials.userId', 'fullName phonePrimary')
@@ -1248,6 +1253,9 @@ class MeetingsService {
     sector.deletedBy = actorUserId;
     sector.updatedBy = actorUserId;
     await sector.save();
+    if (sector.avatar?.storageKey) {
+      await storageService.deleteFile(sector.avatar.storageKey);
+    }
 
     const meetings = await Meeting.find({ sectorId: sector._id, isDeleted: { $ne: true } }).select('_id').lean();
     const meetingIds = meetings.map((meeting) => meeting._id);
@@ -1782,12 +1790,14 @@ class MeetingsService {
 
     return {
       url: asset.url || '',
-      publicId: asset.publicId || '',
+      storageKey: asset.storageKey || '',
+      provider: asset.provider || 'r2',
       originalName: asset.originalName || '',
       mimeType: asset.mimeType || '',
       kind: asset.kind || '',
       resourceType: asset.resourceType || '',
       bytes: Number(asset.bytes) || 0,
+      size: Number(asset.size || asset.bytes) || 0,
     };
   }
 
@@ -1877,12 +1887,13 @@ class MeetingsService {
     return [...new Map(
       (assets || []).map((asset) => {
         const url = this._normalizeText(asset?.url);
-        const publicId = this._normalizeText(asset?.publicId);
+        const storageKey = this._normalizeText(asset?.storageKey);
+        const provider = this._normalizeText(asset?.provider) || 'r2';
         const originalName = this._normalizeText(asset?.originalName);
         const mimeType = this._normalizeText(asset?.mimeType);
         const kind = this._normalizeText(asset?.kind);
         const resourceType = this._normalizeText(asset?.resourceType);
-        const bytes = Number(asset?.bytes) || 0;
+        const bytes = Number(asset?.bytes || asset?.size) || 0;
 
         if (!url) {
           throw ApiError.badRequest('Documentation asset URL is required', 'VALIDATION_ERROR');
@@ -1902,17 +1913,37 @@ class MeetingsService {
 
         const normalizedAsset = {
           url,
-          publicId: publicId || undefined,
+          storageKey: storageKey || undefined,
+          provider,
           originalName: originalName || undefined,
           mimeType: mimeType || undefined,
           kind,
           resourceType,
           bytes,
+          size: bytes,
         };
 
-        return [publicId || url, normalizedAsset];
+        return [storageKey || url, normalizedAsset];
       })
     ).values()];
+  }
+
+  _collectMeetingDocumentationStorageKeysFromAssets(assets = []) {
+    return (assets || [])
+      .map((asset) => this._normalizeText(asset?.storageKey))
+      .filter(Boolean);
+  }
+
+  _collectMeetingDocumentationStorageKeys(recordLike = {}) {
+    const keys = [
+      ...this._collectMeetingDocumentationStorageKeysFromAssets(recordLike?.attachments || []),
+    ];
+
+    (recordLike?.fieldResponses || []).forEach((response) => {
+      keys.push(...this._collectMeetingDocumentationStorageKeysFromAssets(response?.assets || []));
+    });
+
+    return keys;
   }
 
   _normalizeMeetingDocumentationFieldResponse(response, fieldConfig) {
@@ -2202,6 +2233,9 @@ class MeetingsService {
       meetingId: meetingObjectId,
       documentationDate: normalizedDocumentationDate,
     });
+    const previousStorageKeys = record
+      ? this._collectMeetingDocumentationStorageKeys(record.toObject ? record.toObject() : record)
+      : [];
 
     if (!record) {
       record = new MeetingDocumentation({
@@ -2226,6 +2260,10 @@ class MeetingsService {
       createdAt: now,
     });
     await record.save();
+
+    const nextStorageKeys = this._collectMeetingDocumentationStorageKeys(record.toObject());
+    const removedStorageKeys = previousStorageKeys.filter((key) => !nextStorageKeys.includes(key));
+    await storageService.deleteFiles(removedStorageKeys);
 
     return this._mapMeetingDocumentationRecord(record.toObject());
   }
@@ -2591,6 +2629,7 @@ class MeetingsService {
     }
 
     const previousSnapshot = meeting.toObject();
+    const previousAvatarStorageKey = meeting.avatar?.storageKey || '';
 
     if (payload.sectorId !== undefined) {
       await this._assertSectorExists(payload.sectorId);
@@ -2647,6 +2686,14 @@ class MeetingsService {
     await meeting.save();
 
     await this._syncMeetingLinks(meeting._id, previousSnapshot, meeting.toObject());
+
+    if (
+      payload.avatar !== undefined &&
+      previousAvatarStorageKey &&
+      previousAvatarStorageKey !== meeting.avatar?.storageKey
+    ) {
+      await storageService.deleteFile(previousAvatarStorageKey);
+    }
 
     return this.getMeetingById(meeting._id);
   }
@@ -2717,6 +2764,9 @@ class MeetingsService {
 
     await meeting.save();
     await this._syncMeetingLinks(meeting._id, previousSnapshot, null);
+    if (meeting.avatar?.storageKey) {
+      await storageService.deleteFile(meeting.avatar.storageKey);
+    }
   }
 
   async listResponsibilitySuggestions({ search, limit = 30 }) {

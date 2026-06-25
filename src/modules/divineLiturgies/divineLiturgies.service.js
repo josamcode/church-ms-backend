@@ -338,7 +338,7 @@ class DivineLiturgiesService {
       userLike?.avatar && typeof userLike.avatar === 'object' && userLike.avatar.url
         ? {
             url: userLike.avatar.url,
-            publicId: userLike.avatar.publicId || null,
+            storageKey: userLike.avatar.storageKey || null,
           }
         : null;
 

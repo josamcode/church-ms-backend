@@ -1,9 +1,6 @@
 const path = require('path');
-const streamifier = require('streamifier');
-const cloudinary = require('../config/cloudinary');
 const config = require('../config/env');
 const ApiError = require('./ApiError');
-const logger = require('./logger');
 
 const FILE_SIGNATURES = [
   {
@@ -214,30 +211,9 @@ const validateDocumentationUpload = (file, options = {}) =>
     ...options,
   });
 
-const uploadBufferToCloudinary = (file, options = {}, failureMessage = 'Failed to upload file') => {
-  if (!config.cloudinary.enabled) {
-    throw ApiError.serviceUnavailable('File uploads are not configured', 'UPLOADS_UNAVAILABLE');
-  }
-
-  return new Promise((resolve, reject) => {
-    const uploadStream = cloudinary.uploader.upload_stream(options, (error, result) => {
-      if (error) {
-        logger.error(`Cloudinary upload error: ${error.message}`);
-        reject(ApiError.internal(failureMessage));
-        return;
-      }
-
-      resolve(result);
-    });
-
-    streamifier.createReadStream(file.buffer).pipe(uploadStream);
-  });
-};
-
 module.exports = {
   detectFileDetails,
   getFileExtension,
-  uploadBufferToCloudinary,
   validateDocumentationUpload,
   validateImageUpload,
   validateUpload,

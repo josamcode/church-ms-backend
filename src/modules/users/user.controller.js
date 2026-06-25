@@ -113,9 +113,9 @@ const deleteUser = asyncHandler(async (req, res) => {
   });
 });
 
-/** Upload image to Cloudinary only (for new user create flow). Returns { url, publicId }. */
+/** Upload image only (for new user create flow). Returns storage metadata. */
 const uploadAvatarImage = asyncHandler(async (req, res) => {
-  const avatar = await userService.uploadImageToCloudinary(req.file);
+  const avatar = await userService.uploadImageToStorage(req.file);
   return ApiResponse.success(res, {
     message: 'تم رفع الصورة بنجاح',
     data: avatar,

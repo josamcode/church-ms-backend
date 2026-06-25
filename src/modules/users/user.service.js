@@ -13,11 +13,8 @@ const { ROLES } = require('../../constants/roles');
 const { ACCOUNT_STATUSES } = require('../../constants/accountStatuses');
 const { SERVICE_TYPES } = require('../divineLiturgies/divineLiturgyRecurring.model');
 const logger = require('../../utils/logger');
-const cloudinary = require('../../config/cloudinary');
-const {
-  uploadBufferToCloudinary,
-  validateImageUpload,
-} = require('../../utils/fileUploads');
+const { validateImageUpload } = require('../../utils/fileUploads');
+const storageService = require('../../services/storage/storage.service');
 
 const LIST_USER_SELECT = [
   '_id',
@@ -337,9 +334,15 @@ class UserService {
       preparedData.avatar &&
       typeof preparedData.avatar === 'object' &&
       preparedData.avatar.url &&
-      preparedData.avatar.publicId
+      preparedData.avatar.storageKey
     ) {
-      userData.avatar = { url: preparedData.avatar.url, publicId: preparedData.avatar.publicId };
+      userData.avatar = {
+        url: preparedData.avatar.url,
+        storageKey: preparedData.avatar.storageKey,
+        provider: preparedData.avatar.provider || 'r2',
+        mimeType: preparedData.avatar.mimeType || '',
+        size: Number(preparedData.avatar.size) || 0,
+      };
     }
 
     if (preparedData.password) {
@@ -1313,32 +1316,31 @@ class UserService {
   }
 
   /**
-   * رفع صورة إلى Cloudinary فقط (بدون ربط بمستخدم) - للاستخدام عند إنشاء مستخدم جديد
+   * رفع صورة إلى storage فقط (بدون ربط بمستخدم) - للاستخدام عند إنشاء مستخدم جديد
    */
-  async uploadImageToCloudinary(file) {
-    validateImageUpload(file, { emptyLabel: 'image' });
+  async uploadImageToStorage(file, userId = 'pending') {
+    const fileDetails = validateImageUpload(file, { emptyLabel: 'image' });
 
-    const result = await uploadBufferToCloudinary(
-      file,
-      {
-        folder: 'church/avatars',
-        resource_type: 'image',
-        transformation: [
-          { width: 400, height: 400, crop: 'fill', gravity: 'face' },
-          { quality: 'auto', fetch_format: 'auto' },
-        ],
-      },
-      'Failed to upload avatar image'
-    );
+    const result = await storageService.uploadFile(file, {
+      prefix: `users/avatars/${userId || 'pending'}`,
+      fileDetails,
+      failureMessage: 'Failed to upload avatar image',
+    });
 
-    return { url: result.secure_url, publicId: result.public_id };
+    return {
+      url: result.url,
+      storageKey: result.storageKey,
+      provider: result.provider,
+      mimeType: result.mimeType,
+      size: result.size,
+    };
   }
 
   /**
-   * رفع الصورة الشخصية إلى Cloudinary وربطها بمستخدم
+   * رفع الصورة الشخصية إلى storage وربطها بمستخدم
    */
   async uploadAvatar(userId, file, updatedByUserId) {
-    const { url, publicId } = await this.uploadImageToCloudinary(file);
+    const avatar = await this.uploadImageToStorage(file, userId);
 
     const user = await User.findById(userId);
     if (!user) {
@@ -1346,19 +1348,25 @@ class UserService {
     }
 
     // Delete old avatar if exists
-    if (user.avatar && user.avatar.publicId) {
+    if (user.avatar && user.avatar.storageKey) {
       try {
-        await cloudinary.uploader.destroy(user.avatar.publicId);
+        await storageService.deleteFile(user.avatar.storageKey);
       } catch (err) {
         logger.warn(`فشل حذف الصورة القديمة: ${err.message}`);
       }
     }
 
     const oldAvatar = user.avatar
-      ? { url: user.avatar.url, publicId: user.avatar.publicId }
+      ? {
+          url: user.avatar.url,
+          storageKey: user.avatar.storageKey,
+          provider: user.avatar.provider,
+          mimeType: user.avatar.mimeType,
+          size: user.avatar.size,
+        }
       : null;
 
-    user.avatar = { url, publicId };
+    user.avatar = avatar;
     user.updatedBy = updatedByUserId;
     user.changeLog.push({
       by: updatedByUserId,
@@ -1591,3 +1599,4 @@ class UserService {
 }
 
 module.exports = new UserService();
+

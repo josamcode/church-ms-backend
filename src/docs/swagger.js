@@ -90,7 +90,7 @@ const options = {
               nullable: true,
               properties: {
                 url: { type: 'string' },
-                publicId: { type: 'string' },
+                storageKey: { type: 'string' },
               },
             },
             tags: { type: 'array', items: { type: 'string' }, description: 'الوسوم' },
@@ -500,7 +500,7 @@ const options = {
         post: {
           tags: ['الافراد'],
           summary: 'رفع صورة شخصية',
-          description: 'رفع أو تحديث الصورة الشخصية للمستخدم عبر Cloudinary. الأنواع المسموحة: JPEG, PNG, GIF, WEBP. الحد الأقصى: 5 ميجابايت. تتطلب صلاحية USERS_UPLOAD_AVATAR.',
+          description: 'رفع أو تحديث الصورة الشخصية للمستخدم عبر R2 storage. الأنواع المسموحة: JPEG, PNG, GIF, WEBP. الحد الأقصى: 5 ميجابايت. تتطلب صلاحية USERS_UPLOAD_AVATAR.',
           security: [{ BearerAuth: [] }],
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' }, description: 'معرّف المستخدم' }],
           requestBody: {
@@ -531,7 +531,7 @@ const options = {
                             type: 'object',
                             properties: {
                               url: { type: 'string', description: 'رابط الصورة' },
-                              publicId: { type: 'string', description: 'معرّف Cloudinary' },
+                              storageKey: { type: 'string', description: 'معرّف R2 storage' },
                             },
                           },
                         },
@@ -671,3 +671,4 @@ const options = {
 const specs = swaggerJsdoc(options);
 
 module.exports = { swaggerUi, specs };
+

@@ -167,8 +167,8 @@ const response = await fetch(`/api/users/${userId}/avatar`, {
   "success": true,
   "message": "تم رفع الصورة الشخصية بنجاح",
   "data": {
-    "url": "https://res.cloudinary.com/...",
-    "publicId": "church/avatars/abc123"
+    "url": "https://your-r2-public-domain.example/users/avatars/example.jpg",
+    "storageKey": "users/avatars/abc123.jpg"
   }
 }
 ```
@@ -260,3 +260,5 @@ POST /api/users/65a1b2c3d4e5f6g7h8i9j0k1/unlock
 | `sibling` | أخ/أخت (مصفوفة)        |
 | `child`   | ابن/بنت (مصفوفة)       |
 | `other`   | قريب آخر (مصفوفة)      |
+
+

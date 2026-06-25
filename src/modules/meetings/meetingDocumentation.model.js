@@ -10,9 +10,14 @@ const meetingDocumentationAssetSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-    publicId: {
+    storageKey: {
       type: String,
       trim: true,
+    },
+    provider: {
+      type: String,
+      trim: true,
+      default: 'r2',
     },
     originalName: {
       type: String,
@@ -35,6 +40,10 @@ const meetingDocumentationAssetSchema = new mongoose.Schema(
       required: true,
     },
     bytes: {
+      type: Number,
+      min: 0,
+    },
+    size: {
       type: Number,
       min: 0,
     },

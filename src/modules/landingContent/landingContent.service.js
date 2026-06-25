@@ -1,9 +1,7 @@
 const mongoose = require('mongoose');
-const streamifier = require('streamifier');
 const ApiError = require('../../utils/ApiError');
-const logger = require('../../utils/logger');
-const config = require('../../config/env');
-const cloudinary = require('../../config/cloudinary');
+const { validateImageUpload } = require('../../utils/fileUploads');
+const storageService = require('../../services/storage/storage.service');
 const User = require('../users/user.model');
 const Meeting = require('../meetings/meeting.model');
 const ChurchPriest = require('../divineLiturgies/churchPriest.model');
@@ -92,7 +90,7 @@ class LandingContentService {
       userLike?.avatar && typeof userLike.avatar === 'object' && userLike.avatar.url
         ? {
             url: userLike.avatar.url,
-            publicId: userLike.avatar.publicId || null,
+            storageKey: userLike.avatar.storageKey || null,
           }
         : null;
 
@@ -384,7 +382,10 @@ class LandingContentService {
         document?.heroImage && document.heroImage.url
           ? {
               url: document.heroImage.url,
-              publicId: document.heroImage.publicId || null,
+              storageKey: document.heroImage.storageKey || null,
+              provider: document.heroImage.provider || 'r2',
+              mimeType: document.heroImage.mimeType || '',
+              size: document.heroImage.size || 0,
             }
           : null,
       stats: {
@@ -449,50 +450,22 @@ class LandingContentService {
   }
 
   async uploadHeroImage(file, actorUserId) {
-    if (!file) {
-      throw ApiError.badRequest('Please choose an image', 'UPLOAD_FAILED');
-    }
-
-    if (!config.upload.allowedImageTypes.includes(file.mimetype)) {
-      throw ApiError.badRequest(
-        'Unsupported image type. Allowed: JPEG, PNG, GIF, WEBP',
-        'UPLOAD_INVALID_TYPE'
-      );
-    }
-
-    if (file.size > config.upload.maxFileSize) {
-      throw ApiError.badRequest(
-        `File exceeds size limit (${Math.round(config.upload.maxFileSize / 1024 / 1024)} MB)`,
-        'UPLOAD_FILE_TOO_LARGE'
-      );
-    }
-
-    const uploadResult = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder: 'church/landing/hero',
-          resource_type: 'image',
-        },
-        (error, result) => {
-          if (error) {
-            logger.error(`Landing hero image upload error: ${error.message}`);
-            reject(ApiError.internal('Failed to upload hero image'));
-            return;
-          }
-
-          resolve(result);
-        }
-      );
-
-      streamifier.createReadStream(file.buffer).pipe(uploadStream);
+    const fileDetails = validateImageUpload(file, { emptyLabel: 'image' });
+    const uploadResult = await storageService.uploadFile(file, {
+      prefix: 'landing/hero',
+      fileDetails,
+      failureMessage: 'Failed to upload hero image',
     });
 
     const document = await this._ensureDocument();
-    const previousPublicId = document?.heroImage?.publicId || null;
+    const previousStorageKey = document?.heroImage?.storageKey || null;
 
     document.heroImage = {
-      url: uploadResult.secure_url,
-      publicId: uploadResult.public_id,
+      url: uploadResult.url,
+      storageKey: uploadResult.storageKey,
+      provider: uploadResult.provider,
+      mimeType: uploadResult.mimeType,
+      size: uploadResult.size,
     };
     document.updatedBy = this._toObjectId(actorUserId, 'actorUserId');
     if (!document.createdBy) {
@@ -501,30 +474,25 @@ class LandingContentService {
 
     await document.save();
 
-    if (previousPublicId && previousPublicId !== uploadResult.public_id) {
-      try {
-        await cloudinary.uploader.destroy(previousPublicId);
-      } catch (_error) {
-        // Old hero cleanup failure should not block the save.
-      }
+    if (previousStorageKey && previousStorageKey !== uploadResult.storageKey) {
+      await storageService.deleteFile(previousStorageKey);
     }
 
     return {
-      url: uploadResult.secure_url,
-      publicId: uploadResult.public_id,
+      url: uploadResult.url,
+      storageKey: uploadResult.storageKey,
+      provider: uploadResult.provider,
+      mimeType: uploadResult.mimeType,
+      size: uploadResult.size,
     };
   }
 
   async deleteHeroImage(actorUserId) {
     const document = await this._ensureDocument();
-    const previousPublicId = document?.heroImage?.publicId || null;
+    const previousStorageKey = document?.heroImage?.storageKey || null;
 
-    if (previousPublicId) {
-      try {
-        await cloudinary.uploader.destroy(previousPublicId);
-      } catch (_error) {
-        // Keep DB cleanup even if remote deletion fails.
-      }
+    if (previousStorageKey) {
+      await storageService.deleteFile(previousStorageKey);
     }
 
     document.heroImage = undefined;
@@ -540,4 +508,3 @@ class LandingContentService {
 }
 
 module.exports = new LandingContentService();
-

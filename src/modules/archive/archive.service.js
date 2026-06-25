@@ -2,10 +2,8 @@ const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
 const { PERMISSIONS } = require('../../constants/permissions');
 const ArchiveContent = require('./archive.model');
-const {
-  uploadBufferToCloudinary,
-  validateImageUpload,
-} = require('../../utils/fileUploads');
+const { validateImageUpload } = require('../../utils/fileUploads');
+const storageService = require('../../services/storage/storage.service');
 const {
   ARCHIVE_DOCUMENT_KEY,
   ARCHIVE_STATUSES,
@@ -78,14 +76,17 @@ class ArchiveService {
       const url = this._normalizeText(entry?.url, 2000);
       if (!url) return;
 
-      const publicId = this._normalizeText(entry?.publicId, 400) || null;
-      const dedupeKey = publicId || url;
+      const storageKey = this._normalizeText(entry?.storageKey, 500) || null;
+      const dedupeKey = storageKey || url;
       if (seen.has(dedupeKey)) return;
       seen.add(dedupeKey);
 
       normalized.push({
         url,
-        publicId,
+        storageKey,
+        provider: this._normalizeText(entry?.provider, 40) || 'r2',
+        mimeType: this._normalizeText(entry?.mimeType, 160),
+        size: Number(entry?.size) || 0,
         caption: this._normalizeText(entry?.caption, 240),
       });
     });
@@ -133,30 +134,19 @@ class ArchiveService {
     return nextDate.toISOString().slice(0, 10);
   }
 
-  _collectPhotoPublicIds(photos = []) {
+  _collectPhotoStorageKeys(photos = []) {
     return (Array.isArray(photos) ? photos : [])
-      .map((entry) => this._normalizeText(entry?.publicId, 400))
+      .map((entry) => this._normalizeText(entry?.storageKey, 500))
       .filter(Boolean);
   }
 
-  _collectRemovedPhotoPublicIds(currentPhotos = [], nextPhotos = []) {
-    const nextIds = new Set(this._collectPhotoPublicIds(nextPhotos));
-    return this._collectPhotoPublicIds(currentPhotos).filter((publicId) => !nextIds.has(publicId));
+  _collectRemovedPhotoStorageKeys(currentPhotos = [], nextPhotos = []) {
+    const nextKeys = new Set(this._collectPhotoStorageKeys(nextPhotos));
+    return this._collectPhotoStorageKeys(currentPhotos).filter((storageKey) => !nextKeys.has(storageKey));
   }
 
-  async _destroyAssets(publicIds = []) {
-    const uniqueIds = [...new Set((publicIds || []).filter(Boolean))];
-    if (!uniqueIds.length) return;
-
-    await Promise.allSettled(
-      uniqueIds.map(async (publicId) => {
-        try {
-          await cloudinary.uploader.destroy(publicId);
-        } catch (error) {
-          logger.warn(`Archive asset cleanup failed for ${publicId}: ${error.message}`);
-        }
-      })
-    );
+  async _deleteAssets(storageKeys = []) {
+    await storageService.deleteFiles(storageKeys);
   }
 
   _assertPublishPermission(actorPermissions = []) {
@@ -379,20 +369,19 @@ class ArchiveService {
   }
 
   async uploadImage(file) {
-    validateImageUpload(file, { emptyLabel: 'image' });
-
-    const uploadResult = await uploadBufferToCloudinary(
-      file,
-      {
-        folder: 'church/archive/images',
-        resource_type: 'image',
-      },
-      'Failed to upload archive image'
-    );
+    const fileDetails = validateImageUpload(file, { emptyLabel: 'image' });
+    const uploadResult = await storageService.uploadFile(file, {
+      prefix: 'archive/photos',
+      fileDetails,
+      failureMessage: 'Failed to upload archive image',
+    });
 
     return {
-      url: uploadResult.secure_url,
-      publicId: uploadResult.public_id,
+      url: uploadResult.url,
+      storageKey: uploadResult.storageKey,
+      provider: uploadResult.provider,
+      mimeType: uploadResult.mimeType,
+      size: uploadResult.size,
       caption: '',
     };
   }
@@ -466,8 +455,8 @@ class ArchiveService {
     await document.save();
 
     if (payload?.photos !== undefined) {
-      await this._destroyAssets(
-        this._collectRemovedPhotoPublicIds(currentPhotos, collection.photos)
+      await this._deleteAssets(
+        this._collectRemovedPhotoStorageKeys(currentPhotos, collection.photos)
       );
     }
 
@@ -501,7 +490,7 @@ class ArchiveService {
     }
 
     const actorObjectId = this._toObjectId(actorUserId, 'actorUserId');
-    const photoPublicIds = this._collectPhotoPublicIds(collection.photos);
+    const photoStorageKeys = this._collectPhotoStorageKeys(collection.photos);
 
     document.stories.forEach((entry) => {
       if (this._toId(entry?.collectionId) === collectionId) {
@@ -521,7 +510,7 @@ class ArchiveService {
 
     this._prepareDocumentAudit(document, actorObjectId);
     await document.save();
-    await this._destroyAssets(photoPublicIds);
+    await this._deleteAssets(photoStorageKeys);
 
     return this._buildPayload(document);
   }
@@ -599,7 +588,7 @@ class ArchiveService {
     await document.save();
 
     if (payload?.photos !== undefined) {
-      await this._destroyAssets(this._collectRemovedPhotoPublicIds(currentPhotos, story.photos));
+      await this._deleteAssets(this._collectRemovedPhotoStorageKeys(currentPhotos, story.photos));
     }
 
     return this._buildPayload(document);
@@ -616,13 +605,13 @@ class ArchiveService {
     this._assertItemMutationAllowed(story, actorPermissions);
 
     const actorObjectId = this._toObjectId(actorUserId, 'actorUserId');
-    const photoPublicIds = this._collectPhotoPublicIds(story.photos);
+    const photoStorageKeys = this._collectPhotoStorageKeys(story.photos);
 
     story.deleteOne();
 
     this._prepareDocumentAudit(document, actorObjectId);
     await document.save();
-    await this._destroyAssets(photoPublicIds);
+    await this._deleteAssets(photoStorageKeys);
 
     return this._buildPayload(document);
   }
@@ -700,7 +689,7 @@ class ArchiveService {
     await document.save();
 
     if (payload?.photos !== undefined) {
-      await this._destroyAssets(this._collectRemovedPhotoPublicIds(currentPhotos, honoree.photos));
+      await this._deleteAssets(this._collectRemovedPhotoStorageKeys(currentPhotos, honoree.photos));
     }
 
     return this._buildPayload(document);
@@ -717,13 +706,13 @@ class ArchiveService {
     this._assertItemMutationAllowed(honoree, actorPermissions);
 
     const actorObjectId = this._toObjectId(actorUserId, 'actorUserId');
-    const photoPublicIds = this._collectPhotoPublicIds(honoree.photos);
+    const photoStorageKeys = this._collectPhotoStorageKeys(honoree.photos);
 
     honoree.deleteOne();
 
     this._prepareDocumentAudit(document, actorObjectId);
     await document.save();
-    await this._destroyAssets(photoPublicIds);
+    await this._deleteAssets(photoStorageKeys);
 
     return this._buildPayload(document);
   }
