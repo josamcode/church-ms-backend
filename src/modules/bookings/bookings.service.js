@@ -5,6 +5,7 @@ const ApiError = require('../../utils/ApiError');
 const BookingType = require('./bookingType.model');
 const Booking = require('./booking.model');
 const BookingSlotCounter = require('./bookingSlotCounter.model');
+const BookingPendingUpload = require('./bookingPendingUpload.model');
 const { validateImageUpload } = require('../../utils/fileUploads');
 const storageService = require('../../services/storage/storage.service');
 
@@ -640,6 +641,110 @@ class BookingsService {
     }
   }
 
+  /**
+   * Atomically claim an IMAGE field value against a BookingPendingUpload record.
+   *
+   * Uses findOneAndUpdate with all ownership conditions so that two parallel
+   * requests cannot both claim the same upload.  Returns the resolved image
+   * value on success; throws a descriptive ApiError on failure.
+   *
+   * The upload is marked consumed IMMEDIATELY (before the booking is saved).
+   * If the booking save later fails, the claim is released in the caller.
+   */
+  async _claimImageField(type, fieldKey, submittedValue) {
+    if (!submittedValue || typeof submittedValue !== 'object') {
+      throw ApiError.badRequest(
+        'Image field requires an upload token from the upload-image endpoint',
+        'VALIDATION_ERROR'
+      );
+    }
+
+    const uploadToken = String(submittedValue.uploadToken || '').trim();
+    const storageKey = String(submittedValue.storageKey || '').trim();
+
+    if (!uploadToken && !storageKey) {
+      throw ApiError.badRequest(
+        'Only images uploaded through the booking form are accepted. Please use the upload-image endpoint.',
+        'VALIDATION_ERROR'
+      );
+    }
+
+    // Build the atomic claim query — all conditions must be met for the
+    // findOneAndUpdate to succeed.  MongoDB serialises writes to a single
+    // document so only one parallel request can win.
+    const claimQuery = {
+      consumedAt: null,
+      expiresAt: { $gt: new Date() },
+      bookingTypeId: type._id,
+      fieldKey,
+    };
+
+    if (uploadToken) {
+      claimQuery.uploadToken = uploadToken;
+    } else {
+      claimQuery.storageKey = storageKey;
+    }
+
+    const claimed = await BookingPendingUpload.findOneAndUpdate(
+      claimQuery,
+      { $set: { consumedAt: new Date(), bookingId: null } },
+      { new: true }
+    );
+
+    if (claimed) {
+      return {
+        url: claimed.url,
+        storageKey: claimed.storageKey,
+        provider: 'r2',
+        mimeType: claimed.mimeType,
+        size: claimed.size,
+        _claimedUploadId: claimed._id,
+      };
+    }
+
+    // Claim failed — determine why for a good error message.
+    // We must look up without the atomic conditions to find the record.
+    const lookup = uploadToken
+      ? await BookingPendingUpload.findOne({ uploadToken })
+      : await BookingPendingUpload.findOne({ storageKey }).sort({ createdAt: -1 });
+
+    if (!lookup) {
+      throw ApiError.badRequest(
+        uploadToken
+          ? 'Upload token is invalid or has already been used'
+          : 'Uploaded image was not found. Please re-upload the image.',
+        'VALIDATION_ERROR'
+      );
+    }
+
+    if (String(lookup.bookingTypeId) !== String(type._id)) {
+      throw ApiError.badRequest(
+        'Upload does not belong to this booking type',
+        'VALIDATION_ERROR'
+      );
+    }
+
+    if (lookup.fieldKey !== fieldKey) {
+      throw ApiError.badRequest(
+        `Upload was created for field "${lookup.fieldKey}", not "${fieldKey}"`,
+        'VALIDATION_ERROR'
+      );
+    }
+
+    // The only remaining reasons: expired or already consumed
+    if (lookup.isExpired()) {
+      throw ApiError.badRequest(
+        'Upload has expired. Please upload the image again.',
+        'VALIDATION_ERROR'
+      );
+    }
+
+    throw ApiError.badRequest(
+      'This upload has already been used in another booking',
+      'VALIDATION_ERROR'
+    );
+  }
+
   _normalizeAdditionalFields(type, submittedFields = []) {
     const definitionMap = new Map(
       (Array.isArray(type.dynamicFields) ? type.dynamicFields : []).map((field) => [field.key, field])
@@ -649,12 +754,88 @@ class BookingsService {
       (Array.isArray(submittedFields) ? submittedFields : []).map((field) => [field.key, field?.value])
     );
 
-    return [...definitionMap.values()].map((definition) => ({
-      key: definition.key,
-      label: definition.label,
-      type: definition.type,
-      value: this._validateFieldValue(definition, submittedMap.get(definition.key)),
-    }));
+    return [...definitionMap.values()].map((definition) => {
+      const rawValue = submittedMap.get(definition.key);
+
+      // IMAGE fields are validated asynchronously via _validateAndResolveImageField
+      // against the BookingPendingUpload collection.
+      if (definition.type === FIELD_TYPES.IMAGE) {
+        // If no value was submitted for a non-required field, skip it (return null
+        // like _validateFieldValue does for empty values).
+        if (rawValue == null || rawValue === '') {
+          if (definition.required) {
+            throw ApiError.badRequest(
+              `${definition.label} requires an uploaded image`, 'VALIDATION_ERROR'
+            );
+          }
+          return {
+            key: definition.key,
+            label: definition.label,
+            type: definition.type,
+            value: null,
+          };
+        }
+        return {
+          key: definition.key,
+          label: definition.label,
+          type: definition.type,
+          value: rawValue, // temporary — replaced by _resolveImageFields
+          _needsImageResolution: true,
+          _definition: definition,
+        };
+      }
+      return {
+        key: definition.key,
+        label: definition.label,
+        type: definition.type,
+        value: this._validateFieldValue(definition, rawValue),
+      };
+    });
+  }
+
+  /**
+   * Resolve IMAGE fields by atomically claiming the underlying
+   * BookingPendingUpload records.  Returns the resolved fields and the set
+   * of claimed upload IDs so the caller can release them on failure.
+   */
+  async _resolveImageFields(type, additionalFields) {
+    const resolved = [];
+    const claimedUploadIds = [];
+    for (const field of additionalFields) {
+      if (field._needsImageResolution) {
+        const resolvedValue = await this._claimImageField(
+          type, field.key, field.value
+        );
+        resolved.push({
+          key: field.key,
+          label: field.label,
+          type: field.type,
+          value: resolvedValue,
+        });
+        if (resolvedValue._claimedUploadId) {
+          claimedUploadIds.push(resolvedValue._claimedUploadId);
+        }
+      } else {
+        resolved.push(field);
+      }
+    }
+    return { additionalFields: resolved, claimedUploadIds };
+  }
+
+  /** Release previously claimed uploads (compensation path). */
+  async _releaseClaimedUploads(claimedUploadIds) {
+    if (!claimedUploadIds.length) return;
+    try {
+      await BookingPendingUpload.updateMany(
+        { _id: { $in: claimedUploadIds } },
+        { $set: { consumedAt: null, bookingId: null } }
+      );
+    } catch (err) {
+      logger.warn(
+        `Failed to release claimed uploads after booking failure: ${err.message}. ` +
+        `IDs: ${claimedUploadIds.join(', ')}`
+      );
+    }
   }
 
   _resolvePublicImageField(type, fieldKey) {
@@ -1007,23 +1188,60 @@ class BookingsService {
       throw ApiError.badRequest('Scheduled slot is invalid', 'VALIDATION_ERROR');
     }
 
-    const additionalFields = this._normalizeAdditionalFields(type, payload.dynamicFields);
+    let additionalFields = this._normalizeAdditionalFields(type, payload.dynamicFields);
 
-    const created = await Booking.create({
-      bookingTypeId: type._id,
-      bookingTypeNameSnapshot: type.name,
-      requester: {
-        name: payload.requesterName.trim(),
-        phone: payload.requesterPhone.trim(),
-        email: payload.requesterEmail ? payload.requesterEmail.trim().toLowerCase() : undefined,
-      },
-      scheduledDate: payload.scheduledDate,
-      scheduledTime,
-      scheduledAt,
-      notes: payload.notes || undefined,
-      additionalFields,
-      createdBy: actorUserId || undefined,
-      source: 'public',
+    // Atomically claim IMAGE uploads before creating the booking.
+    // Claims are released if booking save fails.
+    const { additionalFields: resolvedFields, claimedUploadIds } =
+      await this._resolveImageFields(type, additionalFields);
+    additionalFields = resolvedFields;
+
+    let created = null;
+    try {
+      created = await Booking.create({
+        bookingTypeId: type._id,
+        bookingTypeNameSnapshot: type.name,
+        requester: {
+          name: payload.requesterName.trim(),
+          phone: payload.requesterPhone.trim(),
+          email: payload.requesterEmail ? payload.requesterEmail.trim().toLowerCase() : undefined,
+        },
+        scheduledDate: payload.scheduledDate,
+        scheduledTime,
+        scheduledAt,
+        notes: payload.notes || undefined,
+        additionalFields,
+        createdBy: actorUserId || undefined,
+        source: 'public',
+      });
+    } catch (createErr) {
+      // Booking save failed — release the atomically-claimed uploads so they
+      // can be reused in a retry.
+      await this._releaseClaimedUploads(claimedUploadIds);
+      throw createErr;
+    }
+
+    // Bind the claimed uploads to the now-created booking
+    if (claimedUploadIds.length > 0) {
+      try {
+        await BookingPendingUpload.updateMany(
+          { _id: { $in: claimedUploadIds } },
+          { $set: { bookingId: created._id } }
+        );
+      } catch (bindErr) {
+        // Best-effort: the uploads are already consumed; the bookingId
+        // association is non-critical metadata.
+        logger.warn(
+          `Failed to bind claimed uploads to booking ${created._id}: ${bindErr.message}`
+        );
+      }
+    }
+
+    // Remove internal markers before returning to client
+    additionalFields.forEach((f) => {
+      if (f.value && f.value._claimedUploadId) {
+        delete f.value._claimedUploadId;
+      }
     });
 
     // Capacity is enforced atomically at confirmation time via BookingSlotCounter.
@@ -1225,13 +1443,63 @@ class BookingsService {
       failureMessage: 'Failed to upload booking image',
     });
 
+    // Create a short-lived pending-upload record that must be referenced
+    // when the booking is actually created.  This prevents arbitrary external
+    // URLs from being attached to bookings.
+    const pendingUpload = await BookingPendingUpload.create({
+      bookingTypeId: type._id,
+      fieldKey,
+      storageKey: uploadResult.storageKey,
+      url: uploadResult.url,
+      mimeType: uploadResult.mimeType,
+      size: uploadResult.size,
+      originalName: uploadResult.originalName || fileDetails.originalName || '',
+      expiresAt: new Date(
+        Date.now() + BookingPendingUpload.DEFAULT_UPLOAD_EXPIRY_MINUTES * 60 * 1000
+      ),
+    });
+
     return {
+      uploadToken: pendingUpload.uploadToken,
       url: uploadResult.url,
       storageKey: uploadResult.storageKey,
       provider: uploadResult.provider,
       mimeType: uploadResult.mimeType,
       size: uploadResult.size,
     };
+  }
+
+  /**
+   * Clean up expired unconsumed pending uploads.
+   * Deletes the storage objects first, then the DB records.
+   *
+   * The Mongo TTL index on expiresAt will eventually remove expired records,
+   * but that happens AFTER the index cleanup — the storage object must be
+   * deleted BEFORE the record is removed so the key is still available.
+   *
+   * Call this periodically (e.g. via a scheduled task) or at startup.
+   *
+   * @returns {number} count of cleaned-up uploads
+   */
+  async cleanupExpiredPendingUploads() {
+    const expiredUploads = await BookingPendingUpload.find({
+      expiresAt: { $lte: new Date() },
+      consumedAt: null,
+    }).lean();
+
+    if (expiredUploads.length === 0) return 0;
+
+    // 1. Delete storage objects first (keys must still be available)
+    const storageKeys = expiredUploads.map((u) => u.storageKey).filter(Boolean);
+    if (storageKeys.length > 0) {
+      await storageService.deleteFiles(storageKeys);
+    }
+
+    // 2. Delete the DB records
+    const ids = expiredUploads.map((u) => u._id);
+    await BookingPendingUpload.deleteMany({ _id: { $in: ids } });
+
+    return expiredUploads.length;
   }
 }
 
