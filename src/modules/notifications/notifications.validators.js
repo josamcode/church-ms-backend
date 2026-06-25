@@ -1,7 +1,9 @@
 const Joi = require('joi');
 const { PERMISSIONS_ARRAY } = require('../../constants/permissions');
+const { sanitizeNotificationLink } = require('../../utils/sanitizeNotificationLink');
 
 const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
+const RELATIVE_PATH = /^\/[a-zA-Z0-9/\-_.~@:?&=+%#!$'()*,;]+$/;
 
 const idParam = {
   params: Joi.object({
@@ -19,7 +21,9 @@ const detailItem = Joi.object({
   }),
   title: Joi.string().trim().max(160).allow('', null).optional(),
   content: Joi.string().trim().max(5000).allow('', null).optional(),
-  url: Joi.string().uri().max(2000).allow('', null).optional(),
+  // Image urls may point to uploaded storage objects.  Link urls must be
+  // same-origin relative paths only — external URLs are rejected.
+  url: Joi.string().max(2000).allow('', null).optional(),
 }).custom((value, helpers) => {
   if (value.kind === 'text' && !value.content) {
     return helpers.message('Detail content is required for text items');
@@ -27,6 +31,23 @@ const detailItem = Joi.object({
 
   if ((value.kind === 'link' || value.kind === 'image') && !value.url) {
     return helpers.message('Detail url is required for link/image items');
+  }
+
+  // Restrict link-type details to safe relative paths
+  if (value.kind === 'link' && value.url) {
+    if (!RELATIVE_PATH.test(value.url)) {
+      return helpers.message('Detail link url must be a relative app path starting with /');
+    }
+  }
+
+  // Image urls: must be either a relative path or an http/https URL
+  // (for uploaded storage objects).  We keep the existing lenient check.
+  if (value.kind === 'image' && value.url) {
+    const isRelative = value.url.startsWith('/');
+    const isAbsolute = /^https?:\/\//i.test(value.url);
+    if (!isRelative && !isAbsolute) {
+      return helpers.message('Detail image url must be a relative path or an https URL');
+    }
   }
 
   return value;

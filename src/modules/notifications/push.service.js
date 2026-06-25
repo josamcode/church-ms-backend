@@ -2,6 +2,7 @@ const webPush = require('web-push');
 const config = require('../../config/env');
 const ApiError = require('../../utils/ApiError');
 const logger = require('../../utils/logger');
+const { sanitizeNotificationLink } = require('../../utils/sanitizeNotificationLink');
 const PushSubscription = require('./pushSubscription.model');
 const User = require('../users/user.model');
 
@@ -44,17 +45,18 @@ class PushService {
   }
 
   _buildWebPushPayload(notification) {
+    const safeLink = sanitizeNotificationLink(notification.link) || '/dashboard/notifications/inbox';
     return {
       title: notification.title,
       body: notification.message,
       icon: '/logo192.png',
       badge: '/logo192.png',
-      link: notification.link || '/dashboard/notifications/inbox',
+      link: safeLink,
       tag: `user-notification:${notification.id}`,
       data: {
         notificationId: notification.id,
         type: notification.type,
-        link: notification.link || '/dashboard/notifications/inbox',
+        link: safeLink,
       },
     };
   }

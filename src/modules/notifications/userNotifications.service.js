@@ -6,6 +6,7 @@ const { getEffectivePermissions } = require('../../constants/permissions');
 const User = require('../users/user.model');
 const { emitToUsers } = require('../chats/chat.realtime');
 const UserNotification = require('./userNotification.model');
+const { sanitizeNotificationLink } = require('../../utils/sanitizeNotificationLink');
 const pushService = require('./push.service');
 
 class UserNotificationsService {
@@ -47,28 +48,17 @@ class UserNotificationsService {
   }
 
   _normalizeLink(link) {
-    const normalized = String(link || '').trim();
-    if (!normalized) return '';
-
-    if (normalized.startsWith('/')) {
-      return normalized;
-    }
-
-    let parsed;
-    try {
-      parsed = new URL(normalized);
-    } catch (_error) {
-      throw ApiError.badRequest('Notification link must be a valid URL or app path', 'VALIDATION_ERROR');
-    }
-
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
+    const safe = sanitizeNotificationLink(link);
+    // Reject unsafe external/dangerous links instead of silently dropping them
+    // so the caller knows the input was invalid.
+    const raw = String(link || '').trim();
+    if (raw && !safe) {
       throw ApiError.badRequest(
-        'Notification link protocol must be http, https, or a relative app path',
+        'Notification link must be a safe relative app path starting with /',
         'VALIDATION_ERROR'
       );
     }
-
-    return parsed.toString();
+    return safe;
   }
 
   _normalizeMetadata(metadata) {
