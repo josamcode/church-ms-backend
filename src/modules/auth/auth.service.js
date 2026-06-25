@@ -9,6 +9,7 @@ const { CACHE_KEYS, CACHE_TTL } = require('../../constants/cacheKeys');
 const { ROLES } = require('../../constants/roles');
 const { ACCOUNT_STATUSES } = require('../../constants/accountStatuses');
 const { getEffectivePermissions } = require('../../constants/permissions');
+const { disconnectUserSockets } = require('../chats/chat.realtime');
 const platformSettingsService = require('../settings/platformSettings.service');
 const logger = require('../../utils/logger');
 
@@ -142,6 +143,9 @@ class AuthService {
     user.authVersion = Number(user.authVersion || 0) + 1;
     await user.save();
     await this._clearUserCaches(userId);
+
+    // Force-disconnect all sockets for this user
+    disconnectUserSockets(userId, 'auth_version_changed');
   }
 
   async storeRefreshToken(userId, refreshToken, authVersion = 0) {
@@ -507,6 +511,9 @@ class AuthService {
 
     await user.save();
     await this._clearUserCaches(userId);
+
+    // Force-disconnect all sockets for this user
+    disconnectUserSockets(userId, 'auth_version_changed');
   }
 }
 

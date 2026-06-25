@@ -15,6 +15,7 @@ const { SERVICE_TYPES } = require('../divineLiturgies/divineLiturgyRecurring.mod
 const logger = require('../../utils/logger');
 const { validateImageUpload } = require('../../utils/fileUploads');
 const storageService = require('../../services/storage/storage.service');
+const { disconnectUserSockets } = require('../chats/chat.realtime');
 
 const LIST_USER_SELECT = [
   '_id',
@@ -1377,6 +1378,11 @@ class UserService {
     // Clear caches
     await this._clearUserCache(userId);
 
+    // Force-disconnect sockets when auth-sensitive fields change
+    if (shouldInvalidateSessions) {
+      disconnectUserSockets(userId, 'auth_version_changed');
+    }
+
     return user.toSafeObject();
   }
 
@@ -1402,6 +1408,9 @@ class UserService {
 
     await user.save();
     await this._clearUserCache(userId);
+
+    // Force-disconnect all sockets for this user
+    disconnectUserSockets(userId, 'deleted');
   }
 
   /**
@@ -1499,6 +1508,9 @@ class UserService {
     await user.save();
     await this._clearUserCache(userId);
 
+    // Force-disconnect all sockets for this user
+    disconnectUserSockets(userId, 'account_locked');
+
     return user.toSafeObject();
   }
 
@@ -1532,6 +1544,9 @@ class UserService {
 
     await user.save();
     await this._clearUserCache(userId);
+
+    // Force-disconnect sockets — authVersion changes invalidate the JWT
+    disconnectUserSockets(userId, 'auth_version_changed');
 
     return user.toSafeObject();
   }

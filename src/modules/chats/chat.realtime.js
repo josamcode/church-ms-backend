@@ -80,6 +80,40 @@ const filterUsersNotViewingThread = (threadId, userIds = []) => {
   return normalizedUserIds.filter((userId) => !viewingUserIds.has(userId));
 };
 
+/**
+ * Force-disconnect all sockets belonging to a user.
+ *
+ * Emits `auth:revoked` with a reason code before disconnecting so the
+ * client can surface a message.  The socket-level `disconnecting` /
+ * `disconnect` events still fire normally.
+ *
+ * @param {string} userId
+ * @param {string} reason  machine-readable code (e.g. 'account_locked')
+ */
+const disconnectUserSockets = (userId, reason = 'auth_version_changed') => {
+  if (!chatIo) return;
+
+  const room = getUserRoom(userId);
+  const socketIds = chatIo.sockets.adapter.rooms.get(room);
+  if (!socketIds?.size) return;
+
+  socketIds.forEach((socketId) => {
+    const socket = chatIo.sockets.sockets.get(socketId);
+    if (!socket) return;
+    // Best-effort notification before kicking the socket out
+    try {
+      socket.emit('auth:revoked', {
+        reason,
+        message: `Your session has been revoked: ${reason}`,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (_err) {
+      // emit failure must not block disconnect
+    }
+    socket.disconnect(true);
+  });
+};
+
 module.exports = {
   setChatIo,
   getUserRoom,
@@ -91,4 +125,5 @@ module.exports = {
   emitTypingIndicator,
   syncSocketActiveThreadView,
   filterUsersNotViewingThread,
+  disconnectUserSockets,
 };

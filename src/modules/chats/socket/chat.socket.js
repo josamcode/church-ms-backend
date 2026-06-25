@@ -53,7 +53,7 @@ const initializeChatSocketServer = (httpServer) => {
 
       const decoded = jwt.verify(token, config.jwt.accessSecret);
       const user = await User.findById(decoded.sub)
-        .select('role extraPermissions deniedPermissions isDeleted isLocked authVersion fullName avatar')
+        .select('role extraPermissions deniedPermissions isDeleted isLocked authVersion fullName avatar hasLogin accountStatus')
         .lean();
 
       if (!user || user.isDeleted) {
@@ -62,6 +62,18 @@ const initializeChatSocketServer = (httpServer) => {
 
       if (user.isLocked) {
         return next(new Error('AUTH_ACCOUNT_LOCKED'));
+      }
+
+      if (!user.hasLogin) {
+        return next(new Error('AUTH_NO_LOGIN_ACCESS'));
+      }
+
+      const accountStatus = String(user.accountStatus || '').trim().toLowerCase();
+      if (accountStatus === 'pending') {
+        return next(new Error('AUTH_ACCOUNT_PENDING'));
+      }
+      if (accountStatus === 'rejected') {
+        return next(new Error('AUTH_ACCOUNT_REJECTED'));
       }
 
       if (decoded.jti) {
