@@ -70,6 +70,10 @@ const looksLikePlaceholderSecret = (value) => {
     'change_in_production',
     'change_me',
     'changeme',
+    'replace-with',
+    'replace_with',
+    'example_secret',
+    'example_key',
   ].some((pattern) => normalized.includes(pattern));
 };
 
@@ -330,47 +334,66 @@ const config = {
   },
 };
 
-if (isProduction) {
-  assertStrongSecret('JWT_ACCESS_SECRET', config.jwt.accessSecret);
-  assertStrongSecret('JWT_REFRESH_SECRET', config.jwt.refreshSecret);
+/**
+ * Pure validation function — testable without process.env mutation.
+ * Called at module load time with the real config, and exported for tests.
+ */
+function validateConfig(config, envName) {
+  const isProd = envName === 'production';
 
-  if (configuredCorsOrigins.includes('*') && config.cors.credentials) {
-    throw new Error('CORS_ORIGIN cannot include "*" when CORS credentials are enabled');
+  if (isProd) {
+    assertStrongSecret('JWT_ACCESS_SECRET', config.jwt.accessSecret);
+    assertStrongSecret('JWT_REFRESH_SECRET', config.jwt.refreshSecret);
+
+    if (config.cors.origin.includes('*') && config.cors.credentials) {
+      throw new Error('CORS_ORIGIN cannot include "*" when CORS credentials are enabled');
+    }
+  }
+
+  if (!isProd) {
+    config.jwt.accessSecret =
+      config.jwt.accessSecret || 'development_only_access_secret_change_before_production_123456';
+    config.jwt.refreshSecret =
+      config.jwt.refreshSecret || 'development_only_refresh_secret_change_before_production_123456';
+  }
+
+  if (isProd && !config.redis.required) {
+    throw new Error(
+      'REDIS_REQUIRED must be true in production. Set REDIS_REQUIRED=true and provide REDIS_URL or REDIS_HOST.'
+    );
+  }
+
+  if (config.redis.required && !(config.redis.url || config.redis.host)) {
+    throw new Error('Redis is required in this environment. Set REDIS_URL or REDIS_HOST.');
+  }
+
+  if (config.r2.required && !config.r2.enabled) {
+    throw new Error('R2 storage is required in this environment. Configure all R2 settings.');
+  }
+
+  if (isProd && config.docs.enabled) {
+    throw new Error(
+      'ENABLE_API_DOCS must be false in production. The Swagger UI exposes internal API routes publicly.'
+    );
+  }
+
+  if (config.mail.enabled) {
+    if (!config.mail.host) {
+      throw new Error('SMTP_HOST is required when SMTP_ENABLED=true.');
+    }
+    if (!config.mail.from) {
+      throw new Error('SMTP_FROM is required when SMTP_ENABLED=true.');
+    }
+    if (config.mail.port < 1) {
+      throw new Error('SMTP_PORT must be a valid port number when SMTP_ENABLED=true.');
+    }
+    if ((config.mail.user && !config.mail.pass) || (!config.mail.user && config.mail.pass)) {
+      throw new Error('SMTP_USER and SMTP_PASS must be provided together.');
+    }
   }
 }
 
-if (!isProduction) {
-  config.jwt.accessSecret =
-    config.jwt.accessSecret || 'development_only_access_secret_change_before_production_123456';
-  config.jwt.refreshSecret =
-    config.jwt.refreshSecret || 'development_only_refresh_secret_change_before_production_123456';
-}
-
-if (config.redis.required && !(config.redis.url || config.redis.host)) {
-  throw new Error('Redis is required in this environment. Set REDIS_URL or REDIS_HOST.');
-}
-
-if (config.r2.required && !config.r2.enabled) {
-  throw new Error('R2 storage is required in this environment. Configure all R2 settings.');
-}
-
-if (config.mail.enabled) {
-  if (!config.mail.host) {
-    throw new Error('SMTP_HOST is required when SMTP_ENABLED=true.');
-  }
-
-  if (!config.mail.from) {
-    throw new Error('SMTP_FROM is required when SMTP_ENABLED=true.');
-  }
-
-  if (config.mail.port < 1) {
-    throw new Error('SMTP_PORT must be a valid port number when SMTP_ENABLED=true.');
-  }
-
-  if ((config.mail.user && !config.mail.pass) || (!config.mail.user && config.mail.pass)) {
-    throw new Error('SMTP_USER and SMTP_PASS must be provided together.');
-  }
-}
+validateConfig(config, env);
 
 if (config.backup.enabled) {
   if (config.backup.intervalDays < 1) {
@@ -438,4 +461,6 @@ if (config.push.enabled) {
   }
 }
 
+config.validateConfig = validateConfig;
+config._looksLikePlaceholderSecret = looksLikePlaceholderSecret;
 module.exports = config;

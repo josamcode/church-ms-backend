@@ -110,15 +110,19 @@ app.use('/api/aids', aidRoutes);
 app.use('/api/system-analytics', systemAnalyticsRoutes);
 
 app.get('/api/health', (req, res) => {
+  const healthData = {
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  };
+  // Only expose environment name in non-production
+  if (!config.isProduction) {
+    healthData.environment = config.env;
+  }
+
   res.json({
     success: true,
     message: 'Server is healthy',
-    data: {
-      uptime: process.uptime(),
-      environment: config.env,
-      timestamp: new Date().toISOString(),
-      redisFallback: require('./config/redis').isFallback,
-    },
+    data: healthData,
     requestId: res.requestId,
     timestamp: new Date().toISOString(),
   });
