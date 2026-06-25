@@ -2445,6 +2445,10 @@ class MeetingsService {
     }
 
     const meeting = await this._getMeetingForAttendance(meetingId, { lean: false });
+    // Capture updatedAt at load time for optimistic concurrency.
+    // If another request modifies this meeting between load and save,
+    // the conditional findOneAndUpdate returns null → 409 Conflict.
+    const expectedUpdatedAt = meeting.updatedAt;
     const accessContext = this._resolveMeetingAccess({
       meeting,
       actorUserId,
@@ -2543,8 +2547,28 @@ class MeetingsService {
       createdAt: now,
     });
 
-    meeting.updatedBy = actorObjectId;
-    await meeting.save();
+    // ── Atomic save with optimistic concurrency ──
+    // Use findOneAndUpdate conditioned on the meeting's updatedAt at load time.
+    // If a concurrent request modified the meeting, the update returns null
+    // and we reject with 409 instead of silently overwriting.
+    const updatedMeeting = await Meeting.findOneAndUpdate(
+      { _id: meeting._id, updatedAt: expectedUpdatedAt },
+      {
+        $set: {
+          attendanceRecords: meeting.attendanceRecords,
+          attendanceAuditLog: meeting.attendanceAuditLog,
+          updatedBy: actorObjectId,
+        },
+      },
+      { new: true }
+    );
+
+    if (!updatedMeeting) {
+      throw ApiError.conflict(
+        'This meeting attendance was modified by another user. Please refresh and try again.',
+        'ATTENDANCE_CONCURRENT_MODIFICATION'
+      );
+    }
 
     if (scopedMemberIdsList.length > 0) {
       const scopedMemberObjectIds = scopedMemberIdsList.map((memberId) =>
