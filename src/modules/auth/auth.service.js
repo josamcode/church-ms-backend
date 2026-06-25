@@ -8,6 +8,7 @@ const ApiError = require('../../utils/ApiError');
 const { CACHE_KEYS, CACHE_TTL } = require('../../constants/cacheKeys');
 const { ROLES } = require('../../constants/roles');
 const { ACCOUNT_STATUSES } = require('../../constants/accountStatuses');
+const { getEffectivePermissions } = require('../../constants/permissions');
 const platformSettingsService = require('../settings/platformSettings.service');
 const logger = require('../../utils/logger');
 
@@ -33,6 +34,19 @@ class AuthService {
 
   hashToken(token) {
     return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  /**
+   * Compute effective permissions for a user-like object using the backend
+   * authoritative permission tables.  deniedPermissions always override
+   * role-defaults and extraPermissions.
+   */
+  _getEffectivePermissionsForUser(userLike = {}) {
+    return getEffectivePermissions(
+      userLike.role || ROLES.USER,
+      Array.isArray(userLike.extraPermissions) ? userLike.extraPermissions : [],
+      Array.isArray(userLike.deniedPermissions) ? userLike.deniedPermissions : []
+    );
   }
 
   _buildClientUserDto(userLike) {
@@ -70,6 +84,7 @@ class AuthService {
         : [],
       extraPermissions: Array.isArray(user?.extraPermissions) ? user.extraPermissions : [],
       deniedPermissions: Array.isArray(user?.deniedPermissions) ? user.deniedPermissions : [],
+      effectivePermissions: this._getEffectivePermissionsForUser(user),
       createdAt: user?.createdAt || null,
       updatedAt: user?.updatedAt || null,
     };
@@ -254,6 +269,7 @@ class AuthService {
       user: this._buildClientUserDto(user),
       accessToken,
       refreshToken,
+      effectivePermissions: this._getEffectivePermissionsForUser(user),
     };
   }
 
@@ -322,6 +338,7 @@ class AuthService {
     return {
       accessToken,
       refreshToken: newRefreshToken,
+      effectivePermissions: this._getEffectivePermissionsForUser(user),
     };
   }
 

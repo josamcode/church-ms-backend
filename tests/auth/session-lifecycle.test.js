@@ -530,4 +530,121 @@ describe('Auth Session Lifecycle', () => {
       ).rejects.toThrow('session has been invalidated');
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════
+  //  effectivePermissions in auth responses
+  // ═══════════════════════════════════════════════════════════════
+  describe('backend login returns effectivePermissions', () => {
+    it('should include effectivePermissions at the top level of login response', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const userDoc = new UserModel({
+        _id: userId, role: 'ADMIN', authVersion: 0,
+        hasLogin: true, accountStatus: 'approved',
+        extraPermissions: [], deniedPermissions: [],
+      });
+      userDoc.comparePassword = jest.fn().mockResolvedValue(true);
+      mockFindByIdentifier(userDoc);
+      mockFindById(userDoc);
+
+      const result = await authService.login({
+        identifier: '01000000000', password: 'correct-password',
+      });
+
+      expect(result.effectivePermissions).toBeDefined();
+      expect(Array.isArray(result.effectivePermissions)).toBe(true);
+      // ADMIN should have HOUSEHOLD_CLASSIFICATIONS_MANAGE per backend role table
+      expect(result.effectivePermissions).toContain('HOUSEHOLD_CLASSIFICATIONS_MANAGE');
+      // ADMIN should have common admin permissions
+      expect(result.effectivePermissions).toContain('USERS_VIEW');
+      expect(result.effectivePermissions).toContain('USERS_CREATE');
+    });
+  });
+
+  describe('backend me/current-user returns effectivePermissions', () => {
+    it('should include effectivePermissions in the /me user object', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const userDoc = new UserModel({
+        _id: userId, role: 'USER', authVersion: 0,
+        hasLogin: true, accountStatus: 'approved',
+        extraPermissions: [], deniedPermissions: [],
+      });
+      mockFindById(userDoc);
+
+      const result = await authService.getMe(String(userId));
+
+      expect(result.effectivePermissions).toBeDefined();
+      expect(Array.isArray(result.effectivePermissions)).toBe(true);
+      // USER should have self-permissions
+      expect(result.effectivePermissions).toContain('AUTH_VIEW_SELF');
+      expect(result.effectivePermissions).toContain('USERS_VIEW_SELF');
+      // USER should NOT have admin permissions
+      expect(result.effectivePermissions).not.toContain('USERS_CREATE');
+      expect(result.effectivePermissions).not.toContain('USERS_DELETE');
+    });
+  });
+
+  describe('backend refresh returns effectivePermissions', () => {
+    it('should include effectivePermissions in the refresh response', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const userDoc = new UserModel({
+        _id: userId, role: 'USER', authVersion: 0,
+        hasLogin: true, accountStatus: 'approved',
+        extraPermissions: [], deniedPermissions: [],
+      });
+      userDoc.comparePassword = jest.fn().mockResolvedValue(true);
+      mockFindByIdentifier(userDoc);
+      mockFindById(userDoc);
+
+      const loginResult = await authService.login({
+        identifier: '01000000000', password: 'correct-password',
+      });
+
+      mockFindById(userDoc);
+      const refreshResult = await authService.refresh(loginResult.refreshToken);
+
+      expect(refreshResult.effectivePermissions).toBeDefined();
+      expect(Array.isArray(refreshResult.effectivePermissions)).toBe(true);
+      expect(refreshResult.effectivePermissions).toContain('AUTH_VIEW_SELF');
+    });
+  });
+
+  describe('deniedPermissions override role defaults and extraPermissions', () => {
+    it('should remove a role-default permission when it appears in deniedPermissions', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const userDoc = new UserModel({
+        _id: userId, role: 'ADMIN', authVersion: 0,
+        hasLogin: true, accountStatus: 'approved',
+        extraPermissions: ['HOUSEHOLD_CLASSIFICATIONS_MANAGE'],
+        deniedPermissions: ['USERS_CREATE', 'USERS_DELETE'],
+      });
+      mockFindById(userDoc);
+
+      const result = await authService.getMe(String(userId));
+
+      // deniedPermissions should strip USERS_CREATE and USERS_DELETE
+      expect(result.effectivePermissions).not.toContain('USERS_CREATE');
+      expect(result.effectivePermissions).not.toContain('USERS_DELETE');
+      // but other ADMIN permissions should remain
+      expect(result.effectivePermissions).toContain('USERS_VIEW');
+      expect(result.effectivePermissions).toContain('HOUSEHOLD_CLASSIFICATIONS_MANAGE');
+    });
+
+    it('should strip extraPermissions when denied', async () => {
+      const userId = new mongoose.Types.ObjectId();
+      const userDoc = new UserModel({
+        _id: userId, role: 'USER', authVersion: 0,
+        hasLogin: true, accountStatus: 'approved',
+        extraPermissions: ['USERS_VIEW', 'MEETINGS_VIEW'],
+        deniedPermissions: ['USERS_VIEW'],
+      });
+      mockFindById(userDoc);
+
+      const result = await authService.getMe(String(userId));
+
+      // denied USERS_VIEW — should be gone even though in extraPermissions
+      expect(result.effectivePermissions).not.toContain('USERS_VIEW');
+      // MEETINGS_VIEW should still be there
+      expect(result.effectivePermissions).toContain('MEETINGS_VIEW');
+    });
+  });
 });
