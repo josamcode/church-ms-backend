@@ -4,6 +4,7 @@ const logger = require('../../utils/logger');
 const ApiError = require('../../utils/ApiError');
 const BookingType = require('./bookingType.model');
 const Booking = require('./booking.model');
+const BookingSlotCounter = require('./bookingSlotCounter.model');
 const { validateImageUpload } = require('../../utils/fileUploads');
 const storageService = require('../../services/storage/storage.service');
 
@@ -728,6 +729,187 @@ class BookingsService {
     );
   }
 
+  // ──────────────────────────────────────────────
+  //  Atomic slot-capacity counter helpers
+  // ──────────────────────────────────────────────
+
+  /**
+   * Derive the slot key used by the counter collection.
+   * Must match the key used by _getBookedSlotCounts and _assertCapacityAvailable.
+   */
+  _slotKey(scheduledDate, scheduledTime) {
+    return `${scheduledDate}|${scheduledTime || ''}`;
+  }
+
+  /**
+   * Ensure a counter document exists for the given slot.
+   * Idempotent — safe to call before every claim.
+   */
+  async _ensureSlotCounter(bookingTypeId, slotDate, slotTime, capacity) {
+    try {
+      await BookingSlotCounter.updateOne(
+        { bookingTypeId, slotDate, slotTime },
+        { $setOnInsert: { used: 0, capacity: Math.max(capacity || 1, 1) } },
+        { upsert: true }
+      );
+    } catch (err) {
+      // If the unique index race caused a duplicate-key error, the counter
+      // already exists — this is harmless.
+      if (err.code !== 11000) throw err;
+    }
+  }
+
+  /**
+   * Atomically claim one unit of capacity for a slot.
+   *
+   * On first access for a slot, the counter is lazily backfilled by counting
+   * existing CONFIRMED / COMPLETED bookings so that pre-existing data is
+   * correctly accounted for.
+   *
+   * Uses findOneAndUpdate with `$expr: { $lt: ['$used', '$capacity'] }`
+   * so the increment only succeeds when there is remaining capacity.
+   *
+   * @returns {boolean} true if the claim succeeded, false if the slot is full
+   */
+  async _claimSlotCapacity(bookingTypeId, slotDate, slotTime, capacity) {
+    // Lazy backfill: if the counter doesn't exist yet, seed it with the actual
+    // count of CONFIRMED+COMPLETED bookings for this slot.
+    let counter = await BookingSlotCounter.findOne({
+      bookingTypeId,
+      slotDate,
+      slotTime,
+    });
+
+    if (!counter) {
+      const actualUsed = await Booking.countDocuments({
+        bookingTypeId,
+        scheduledDate: slotDate,
+        scheduledTime: slotTime || { $in: [null, ''] },
+        status: { $in: [BOOKING_STATUSES.CONFIRMED, BOOKING_STATUSES.COMPLETED] },
+      });
+
+      // Create the counter via upsert; if another request beat us, use its value
+      try {
+        counter = await BookingSlotCounter.findOneAndUpdate(
+          { bookingTypeId, slotDate, slotTime },
+          { $setOnInsert: { used: actualUsed, capacity: Math.max(capacity || 1, 1) } },
+          { upsert: true, new: true, rawResult: true }
+        );
+        counter = counter?.value || (await BookingSlotCounter.findOne({ bookingTypeId, slotDate, slotTime }));
+      } catch (err) {
+        if (err.code === 11000) {
+          // Duplicate key — another request created the counter; fetch it
+          counter = await BookingSlotCounter.findOne({ bookingTypeId, slotDate, slotTime });
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (!counter) {
+      // Should never happen, but if it does, create with the count we measured
+      await this._ensureSlotCounter(bookingTypeId, slotDate, slotTime, capacity);
+      counter = await BookingSlotCounter.findOne({ bookingTypeId, slotDate, slotTime });
+      if (!counter) return false;
+    }
+
+    // Update capacity if it has changed since the counter was created
+    const effectiveCapacity = Math.max(capacity || 1, 1);
+    if (counter.capacity !== effectiveCapacity) {
+      await BookingSlotCounter.updateOne(
+        { _id: counter._id },
+        { $set: { capacity: effectiveCapacity } }
+      );
+    }
+
+    // Atomic claim: increment used only if used < capacity
+    const result = await BookingSlotCounter.findOneAndUpdate(
+      {
+        _id: counter._id,
+        $expr: { $lt: ['$used', '$capacity'] },
+      },
+      { $inc: { used: 1 } },
+      { new: true }
+    );
+
+    return result !== null;
+  }
+
+  /**
+   * Atomically release one unit of capacity for a slot.
+   * Guards against going below zero.
+   */
+  async _releaseSlotCapacity(bookingTypeId, slotDate, slotTime) {
+    await BookingSlotCounter.findOneAndUpdate(
+      { bookingTypeId, slotDate, slotTime, used: { $gt: 0 } },
+      { $inc: { used: -1 } }
+    );
+  }
+
+  /**
+   * Reconcile all slot counters against the actual Booking collection.
+   * Safe to call at startup or periodically. Rebuilds counters from scratch.
+   *
+   * @param {ObjectId} [bookingTypeId] — optional, reconcile only one type
+   */
+  async reconcileSlotCounters(bookingTypeId = null) {
+    const match = bookingTypeId
+      ? { bookingTypeId: this._toObjectId(bookingTypeId) }
+      : {};
+
+    // Aggregate actual bookings in capacity-consuming statuses
+    const pipeline = [
+      {
+        $match: {
+          ...match,
+          status: { $in: [BOOKING_STATUSES.CONFIRMED, BOOKING_STATUSES.COMPLETED] },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            bookingTypeId: '$bookingTypeId',
+            slotDate: '$scheduledDate',
+            slotTime: { $ifNull: ['$scheduledTime', ''] },
+          },
+          used: { $sum: 1 },
+        },
+      },
+    ];
+
+    const actualCounts = await Booking.aggregate(pipeline);
+
+    for (const entry of actualCounts) {
+      const { bookingTypeId: btId, slotDate, slotTime } = entry._id;
+      // Fetch the booking type to get the current capacity
+      const type = await BookingType.findById(btId).select('capacity').lean();
+      const capacity = type ? type.capacity : 1;
+
+      await BookingSlotCounter.updateOne(
+        { bookingTypeId: btId, slotDate, slotTime },
+        { $set: { used: entry.used, capacity } },
+        { upsert: true }
+      );
+    }
+
+    // Remove counters for slots that no longer have any bookings
+    const activeSlotKeys = new Set(
+      actualCounts.map(
+        (e) => `${e._id.bookingTypeId}||${e._id.slotDate}||${e._id.slotTime}`
+      )
+    );
+
+    const allCounters = await BookingSlotCounter.find(match).lean();
+    for (const counter of allCounters) {
+      const key = `${counter.bookingTypeId}||${counter.slotDate}||${counter.slotTime}`;
+      if (!activeSlotKeys.has(key) && counter.used <= 0) {
+        await BookingSlotCounter.deleteOne({ _id: counter._id });
+      }
+    }
+
+    return actualCounts.length;
+  }
+
   _assertRequestedScheduleAllowed(type, scheduledDate, scheduledTime) {
     if (!this._isValidDateString(scheduledDate)) {
       throw ApiError.badRequest('Scheduled slot is invalid', 'VALIDATION_ERROR');
@@ -844,10 +1026,8 @@ class BookingsService {
       source: 'public',
     });
 
-    // Post-write capacity verification to guard against race conditions
-    await this._verifyAndCompensateCapacity(
-      type, payload.scheduledDate, scheduledTime, created, 'create'
-    );
+    // Capacity is enforced atomically at confirmation time via BookingSlotCounter.
+    // PENDING bookings do not consume capacity, so no post-create claim is needed.
 
     return this._mapBooking(created.toObject());
   }
@@ -958,21 +1138,41 @@ class BookingsService {
       throw ApiError.notFound('Booking not found', 'RESOURCE_NOT_FOUND');
     }
 
+    const currentStatus = booking.status;
     const nextStatus =
-      payload.status !== undefined ? payload.status : booking.status;
-    const isTransitioningToConfirmed =
-      nextStatus === BOOKING_STATUSES.CONFIRMED &&
-      booking.status !== BOOKING_STATUSES.CONFIRMED &&
-      booking.status !== BOOKING_STATUSES.COMPLETED;
+      payload.status !== undefined ? payload.status : currentStatus;
 
-    let bookingTypeForCapacityCheck = null;
-    if (isTransitioningToConfirmed) {
-      bookingTypeForCapacityCheck = await this._resolveBookableType(booking.bookingTypeId);
-      await this._assertCapacityAvailable(
-        bookingTypeForCapacityCheck, booking.scheduledDate, booking.scheduledTime
+    // Capacity-consuming statuses per _getBookedSlotCounts
+    const CONSUMING = new Set([BOOKING_STATUSES.CONFIRMED, BOOKING_STATUSES.COMPLETED]);
+    const wasConsuming = CONSUMING.has(currentStatus);
+    const willConsume = CONSUMING.has(nextStatus);
+
+    // Determine if we need to claim or release capacity
+    const needsClaim = !wasConsuming && willConsume;
+    const needsRelease = wasConsuming && !willConsume;
+
+    let claimed = false;
+
+    // ── Atomic claim BEFORE writing ──
+    if (needsClaim) {
+      const type = await this._resolveBookableType(booking.bookingTypeId);
+      const capacity = type.capacity || 1;
+      claimed = await this._claimSlotCapacity(
+        booking.bookingTypeId,
+        booking.scheduledDate,
+        booking.scheduledTime || '',
+        capacity
       );
+
+      if (!claimed) {
+        throw ApiError.conflict(
+          'The selected time slot is no longer available',
+          'DUPLICATE_VALUE'
+        );
+      }
     }
 
+    // ── Apply the update ──
     if (payload.status !== undefined) {
       booking.status = payload.status;
     }
@@ -982,14 +1182,32 @@ class BookingsService {
     }
 
     booking.updatedBy = actorUserId;
-    await booking.save();
 
-    // Post-write capacity verification when confirming to guard against race conditions
-    if (isTransitioningToConfirmed && bookingTypeForCapacityCheck) {
-      await this._verifyAndCompensateCapacity(
-        bookingTypeForCapacityCheck, booking.scheduledDate,
-        booking.scheduledTime, booking, 'confirm'
-      );
+    try {
+      await booking.save();
+    } catch (saveErr) {
+      // Compensation: if we claimed capacity but the save failed, release it
+      if (claimed) {
+        await this._releaseSlotCapacity(
+          booking.bookingTypeId,
+          booking.scheduledDate,
+          booking.scheduledTime || ''
+        ).catch(() => {
+          // Best-effort release; surface the original save error
+        });
+      }
+      throw saveErr;
+    }
+
+    // ── Release capacity AFTER successful write ──
+    if (needsRelease) {
+      await this._releaseSlotCapacity(
+        booking.bookingTypeId,
+        booking.scheduledDate,
+        booking.scheduledTime || ''
+      ).catch(() => {
+        // Best-effort release; the booking status change succeeded
+      });
     }
 
     return this.getBookingById(booking._id);
