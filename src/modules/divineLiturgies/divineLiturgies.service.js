@@ -927,17 +927,6 @@ class DivineLiturgiesService {
 
     await this._assertAttendanceUsersExist(normalizedAttendedUserIds);
 
-    if (!record) {
-      record = new DivineLiturgyAttendance({
-        entryType: attendanceService.entryType,
-        serviceId: attendanceService.serviceId,
-        serviceType: attendanceService.service.serviceType,
-        attendanceDate: normalizedAttendanceDate,
-        recordedBy: actorObjectId,
-      });
-    }
-
-    record.serviceType = attendanceService.service.serviceType;
     const nextAttendedUserIds = accessContext.accessLevel === 'assigned'
       ? (() => {
           const mergedUserIds = new Set(previousAttendedUserIds);
@@ -953,13 +942,7 @@ class DivineLiturgiesService {
       ? selectedScopedUserIds
       : normalizedAttendedUserIds;
 
-    record.attendedUserIds = nextAttendedUserIds.map((userId) =>
-      this._toObjectId(userId, 'attendedUserIds')
-    );
-    record.updatedBy = actorObjectId;
-    record.updatedAt = now;
-    record.auditLog = record.auditLog || [];
-    record.auditLog.push({
+    const auditEntry = {
       actorUserId: actorObjectId,
       previousAttendedUserIds: previousAuditUserIds.map((userId) =>
         this._toObjectId(userId, 'userId')
@@ -969,8 +952,67 @@ class DivineLiturgiesService {
       ),
       action: 'attendance_check_in_saved',
       createdAt: now,
-    });
-    await record.save();
+    };
+
+    // ── Atomic save with optimistic concurrency ──
+    // Capture updatedAt at load time.  If another request modified this
+    // record between load and now, the conditional update returns null
+    // and we reject with 409 Conflict instead of silently overwriting.
+    const expectedUpdatedAt = record ? record.updatedAt : undefined;
+
+    if (record) {
+      // Existing record — conditional update guards against concurrent modification
+      record = await DivineLiturgyAttendance.findOneAndUpdate(
+        {
+          _id: record._id,
+          updatedAt: expectedUpdatedAt,
+        },
+        {
+          $set: {
+            serviceType: attendanceService.service.serviceType,
+            attendedUserIds: nextAttendedUserIds.map((userId) =>
+              this._toObjectId(userId, 'attendedUserIds')
+            ),
+            updatedBy: actorObjectId,
+            updatedAt: now,
+          },
+          $push: { auditLog: auditEntry },
+        },
+        { new: true }
+      );
+
+      if (!record) {
+        throw ApiError.conflict(
+          'This attendance record was modified by another user. Please refresh and try again.',
+          'ATTENDANCE_CONCURRENT_MODIFICATION'
+        );
+      }
+    } else {
+      // New record — upsert with $setOnInsert prevents duplicate creation
+      record = await DivineLiturgyAttendance.findOneAndUpdate(
+        {
+          entryType: attendanceService.entryType,
+          serviceId: attendanceService.serviceId,
+          attendanceDate: normalizedAttendanceDate,
+        },
+        {
+          $setOnInsert: {
+            entryType: attendanceService.entryType,
+            serviceId: attendanceService.serviceId,
+            serviceType: attendanceService.service.serviceType,
+            attendanceDate: normalizedAttendanceDate,
+            recordedBy: actorObjectId,
+            attendedUserIds: nextAttendedUserIds.map((userId) =>
+              this._toObjectId(userId, 'attendedUserIds')
+            ),
+            updatedBy: actorObjectId,
+            updatedAt: now,
+            auditLog: [auditEntry],
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    }
 
     const affectedUserIds = accessContext.accessLevel === 'assigned'
       ? scopedUserIdsList
