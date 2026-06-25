@@ -205,16 +205,7 @@ class AidService {
     const normalizedOccurrence = normalizeAidOccurrence(updatedData.occurrence);
     const updatedDate = new Date(updatedData.date);
 
-    // 1. Delete all old records matching the exact original dimensions
-    await Aid.deleteMany({
-      date: new Date(date),
-      category,
-      occurrence,
-      description,
-    });
-    await aidReminderService.deleteRemindersForGroup(originalGroup);
-
-    // 2. Prepare new records using the updated dimensions and the fresh list of beneficiaries
+    // 1. Prepare and insert new records FIRST (before deleting originals)
     const payloads = houseNames.map((houseName) => ({
       houseName,
       category: updatedData.category,
@@ -228,18 +219,61 @@ class AidService {
 
     if (payloads.length === 0) return [];
 
-    // 3. Insert the new set of records
-    const result = await Aid.insertMany(payloads);
-    await aidReminderService.syncDueReminderForGroup({
-      date: updatedData.date,
-      category: updatedData.category,
-      occurrence: normalizedOccurrence,
-      description: updatedData.description,
-      notes: updatedData.notes || null,
-      recordedBy,
-      beneficiariesCount: payloads.length,
-    });
-    return result;
+    let insertedIds = [];
+    try {
+      const inserted = await Aid.insertMany(payloads);
+      insertedIds = inserted.map((doc) => doc._id);
+    } catch (insertErr) {
+      // Insertion failed — original records are still intact, propagate the error
+      throw insertErr;
+    }
+
+    // 2. Now delete the old records (original data is only removed after successful insertion)
+    let deletionSucceeded = false;
+    try {
+      await Aid.deleteMany({
+        date: new Date(date),
+        category,
+        occurrence,
+        description,
+      });
+      await aidReminderService.deleteRemindersForGroup(originalGroup);
+      deletionSucceeded = true;
+    } catch (deleteErr) {
+      // Deletion failed — clean up the newly inserted records to avoid duplicates
+      try {
+        if (insertedIds.length > 0) {
+          await Aid.deleteMany({ _id: { $in: insertedIds } });
+        }
+      } catch (cleanupErr) {
+        // Best-effort cleanup; log and surface the original error
+        const logger = require('../../utils/logger');
+        logger.error(
+          `Aid group update cleanup failed after deletion error: ${cleanupErr.message}. ` +
+          `Inserted IDs may need manual cleanup: ${insertedIds.join(', ')}`
+        );
+      }
+      throw deleteErr;
+    }
+
+    // 3. Sync reminder for the new group
+    try {
+      await aidReminderService.syncDueReminderForGroup({
+        date: updatedData.date,
+        category: updatedData.category,
+        occurrence: normalizedOccurrence,
+        description: updatedData.description,
+        notes: updatedData.notes || null,
+        recordedBy,
+        beneficiariesCount: payloads.length,
+      });
+    } catch (reminderErr) {
+      // Non-fatal: the data update succeeded, reminder sync is best-effort
+      const logger = require('../../utils/logger');
+      logger.warn(`Aid group updated but reminder sync failed: ${reminderErr.message}`);
+    }
+
+    return payloads;
   }
 
   async approveAidReminder(notificationId, recordedBy) {

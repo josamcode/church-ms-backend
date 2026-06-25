@@ -1655,20 +1655,57 @@ class UserService {
     return updateData.extraPermissions !== undefined || updateData.deniedPermissions !== undefined;
   }
 
+  _isChangingSensitiveAuthFields(updateData = {}, targetUser = null) {
+    // Role promotion: promoting to ADMIN or SUPER_ADMIN
+    if (updateData.role !== undefined) {
+      const currentRole = targetUser?.role || ROLES.USER;
+      if (updateData.role === ROLES.ADMIN || updateData.role === ROLES.SUPER_ADMIN) {
+        return true;
+      }
+      // Downgrading from ADMIN/SUPER_ADMIN to a lower role
+      if (
+        (currentRole === ROLES.ADMIN || currentRole === ROLES.SUPER_ADMIN) &&
+        updateData.role !== currentRole
+      ) {
+        return true;
+      }
+    }
+
+    // Enabling login for another user
+    if (updateData.hasLogin === true && targetUser && !targetUser.hasLogin) {
+      return true;
+    }
+
+    // Setting or resetting password
+    if (updateData.password !== undefined) {
+      return true;
+    }
+
+    // Changing account status
+    if (updateData.accountStatus !== undefined) {
+      return true;
+    }
+
+    // Changing permission overrides
+    if (this._isChangingPermissionOverrides(updateData)) {
+      return true;
+    }
+
+    // Target is SUPER_ADMIN (any modification to a SUPER_ADMIN is sensitive)
+    if (targetUser?.role === ROLES.SUPER_ADMIN) {
+      return true;
+    }
+
+    return false;
+  }
+
   async _assertRoleAndPermissionManagementAllowed({ actorUserId, targetUser, updateData }) {
-    const isChangingOverrides = this._isChangingPermissionOverrides(updateData);
-    const isTargetSuperAdmin = targetUser?.role === ROLES.SUPER_ADMIN;
-    const isPromotingToSuperAdmin = updateData?.role === ROLES.SUPER_ADMIN;
-
-    const touchesSensitiveAuthFields =
-      isChangingOverrides || isTargetSuperAdmin || isPromotingToSuperAdmin;
-
-    if (!touchesSensitiveAuthFields) return;
+    if (!this._isChangingSensitiveAuthFields(updateData, targetUser)) return;
 
     const actor = await User.findById(actorUserId).select('role').lean();
     if (!actor || actor.role !== ROLES.SUPER_ADMIN) {
       throw ApiError.forbidden(
-        'فقط مدير النظام يمكنه تعديل الصلاحيات أو أدوار مدير النظام',
+        'فقط مدير النظام يمكنه تعديل الصلاحيات أو أدوار المستخدمين أو حالة الحساب أو إعدادات تسجيل الدخول',
         'PERMISSION_DENIED'
       );
     }

@@ -12,7 +12,7 @@ router.use(authenticateJWT);
 
 router.post(
   '/bulk',
-  authorizePermissions(PERMISSIONS.HOUSEHOLD_CLASSIFICATIONS_VIEW),
+  authorizePermissions(PERMISSIONS.HOUSEHOLD_CLASSIFICATIONS_MANAGE),
   validate(aidValidators.createBulkAidsBody),
   aidController.createBulkAids
 );

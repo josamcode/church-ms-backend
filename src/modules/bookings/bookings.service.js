@@ -681,6 +681,53 @@ class BookingsService {
     }
   }
 
+  /**
+   * Post-write capacity verification with compensation.
+   * After creating/confirming a booking, re-count to ensure we haven't exceeded capacity
+   * due to a race condition. If over capacity, compensate by cancelling the booking.
+   *
+   * @param {Object} type - BookingType document
+   * @param {string} scheduledDate
+   * @param {string} scheduledTime
+   * @param {Object} booking - The booking document that was just created/updated
+   * @param {string} operation - 'create' or 'confirm'
+   */
+  async _verifyAndCompensateCapacity(type, scheduledDate, scheduledTime, booking, operation) {
+    const bookedCounts = await this._getBookedSlotCounts(type._id, scheduledDate, scheduledDate);
+    const booked = bookedCounts.get(`${scheduledDate}|${scheduledTime || ''}`) || 0;
+    const capacity = type.capacity || 1;
+
+    if (booked <= capacity) return; // Capacity is fine
+
+    // Race condition detected: compensate
+    const logger = require('../../utils/logger');
+    logger.warn(
+      `Booking capacity race detected for type=${type._id} slot=${scheduledDate}|${scheduledTime || ''}: ` +
+      `${booked} booked vs capacity=${capacity}. Compensating booking ${booking._id}.`
+    );
+
+    try {
+      if (operation === 'create') {
+        booking.status = BOOKING_STATUSES.CANCELLED;
+        booking.adminNotes = 'Auto-cancelled: slot capacity exceeded due to simultaneous booking';
+        await booking.save();
+      } else if (operation === 'confirm') {
+        booking.status = BOOKING_STATUSES.PENDING;
+        booking.adminNotes = 'Auto-reverted to pending: slot capacity exceeded due to simultaneous confirmation';
+        await booking.save();
+      }
+    } catch (compensateErr) {
+      logger.error(
+        `Failed to compensate over-capacity booking ${booking._id}: ${compensateErr.message}`
+      );
+    }
+
+    throw ApiError.conflict(
+      'The selected time slot is no longer available due to a simultaneous booking',
+      'DUPLICATE_VALUE'
+    );
+  }
+
   _assertRequestedScheduleAllowed(type, scheduledDate, scheduledTime) {
     if (!this._isValidDateString(scheduledDate)) {
       throw ApiError.badRequest('Scheduled slot is invalid', 'VALIDATION_ERROR');
@@ -796,6 +843,11 @@ class BookingsService {
       createdBy: actorUserId || undefined,
       source: 'public',
     });
+
+    // Post-write capacity verification to guard against race conditions
+    await this._verifyAndCompensateCapacity(
+      type, payload.scheduledDate, scheduledTime, created, 'create'
+    );
 
     return this._mapBooking(created.toObject());
   }
@@ -913,9 +965,12 @@ class BookingsService {
       booking.status !== BOOKING_STATUSES.CONFIRMED &&
       booking.status !== BOOKING_STATUSES.COMPLETED;
 
+    let bookingTypeForCapacityCheck = null;
     if (isTransitioningToConfirmed) {
-      const type = await this._resolveBookableType(booking.bookingTypeId);
-      await this._assertCapacityAvailable(type, booking.scheduledDate, booking.scheduledTime);
+      bookingTypeForCapacityCheck = await this._resolveBookableType(booking.bookingTypeId);
+      await this._assertCapacityAvailable(
+        bookingTypeForCapacityCheck, booking.scheduledDate, booking.scheduledTime
+      );
     }
 
     if (payload.status !== undefined) {
@@ -928,6 +983,14 @@ class BookingsService {
 
     booking.updatedBy = actorUserId;
     await booking.save();
+
+    // Post-write capacity verification when confirming to guard against race conditions
+    if (isTransitioningToConfirmed && bookingTypeForCapacityCheck) {
+      await this._verifyAndCompensateCapacity(
+        bookingTypeForCapacityCheck, booking.scheduledDate,
+        booking.scheduledTime, booking, 'confirm'
+      );
+    }
 
     return this.getBookingById(booking._id);
   }

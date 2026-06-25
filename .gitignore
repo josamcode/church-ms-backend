@@ -6,3 +6,8 @@ logs/
 coverage/
 tmp/
 secure/
+*.xlsx
+*.archive.gz
+google-oauth-token.json
+client_secret*.json
+*service-account*.json
