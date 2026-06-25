@@ -12,7 +12,9 @@
     "users:repair-phone-index": "node scripts/repairUserPhonePrimaryIndex.js",
     "backup:run": "node scripts/runBackup.js",
     "google-drive:authorize": "node scripts/authorizeGoogleDrive.js",
-    "push:generate-vapid": "node scripts/generateVapidKeys.js"
+    "push:generate-vapid": "node scripts/generateVapidKeys.js",
+    "scan:secrets": "node scripts/scan-secrets.js",
+    "test:security": "npm run scan:secrets && npm test"
   },
   "keywords": [
     "church",
