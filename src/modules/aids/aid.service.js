@@ -204,6 +204,15 @@ class AidService {
     const { date, category, occurrence, description } = originalGroup;
     const normalizedOccurrence = normalizeAidOccurrence(updatedData.occurrence);
     const updatedDate = new Date(updatedData.date);
+    const originalAidDocs = await Aid.find({
+      date: new Date(date),
+      category,
+      occurrence,
+      description,
+    })
+      .select('_id')
+      .lean();
+    const originalAidIds = originalAidDocs.map((doc) => doc._id);
 
     // 1. Prepare and insert new records FIRST (before deleting originals)
     const payloads = houseNames.map((houseName) => ({
@@ -231,12 +240,9 @@ class AidService {
     // 2. Now delete the old records (original data is only removed after successful insertion)
     let deletionSucceeded = false;
     try {
-      await Aid.deleteMany({
-        date: new Date(date),
-        category,
-        occurrence,
-        description,
-      });
+      if (originalAidIds.length > 0) {
+        await Aid.deleteMany({ _id: { $in: originalAidIds } });
+      }
       await aidReminderService.deleteRemindersForGroup(originalGroup);
       deletionSucceeded = true;
     } catch (deleteErr) {

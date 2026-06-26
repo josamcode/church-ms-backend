@@ -24,6 +24,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
   let mockBookingTypeModel;
   let mockCounterModel;
   let counterStore;
+  let bookingStore;
 
   beforeAll(() => {
     jest.mock('../../src/utils/logger', () => ({
@@ -34,6 +35,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
   beforeEach(() => {
     jest.resetModules();
     counterStore = new Map();
+    bookingStore = new Map();
 
     // ── Build mock Booking model ──
     mockBookingModel = function (data) {
@@ -55,9 +57,38 @@ describe('Booking Capacity Race — Atomic Counter', () => {
       this.updatedAt = data.updatedAt || new Date();
       this.save = jest.fn().mockResolvedValue(this);
       this.toObject = jest.fn().mockReturnValue({ ...data, _id: this._id });
+      bookingStore.set(String(this._id), this);
     };
     mockBookingModel.findById = jest.fn();
     mockBookingModel.findOne = jest.fn();
+    mockBookingModel.findOneAndUpdate = jest.fn().mockImplementation(async (query, update) => {
+      const doc = bookingStore.get(String(query._id));
+      if (!doc) return null;
+
+      const queryTime = query.scheduledTime == null ? null : query.scheduledTime;
+      const docTime = doc.scheduledTime == null ? null : doc.scheduledTime;
+      const matches =
+        String(doc._id) === String(query._id) &&
+        String(doc.bookingTypeId) === String(query.bookingTypeId) &&
+        doc.scheduledDate === query.scheduledDate &&
+        docTime === queryTime &&
+        doc.status === query.status;
+
+      if (!matches) return null;
+
+      if (update.$set) {
+        Object.entries(update.$set).forEach(([key, value]) => {
+          doc[key] = value;
+        });
+      }
+      if (update.$unset) {
+        Object.keys(update.$unset).forEach((key) => {
+          doc[key] = undefined;
+        });
+      }
+      doc.updatedAt = new Date();
+      return doc;
+    });
     mockBookingModel.find = jest.fn().mockReturnValue(chainable([]));
     mockBookingModel.create = jest.fn();
     mockBookingModel.countDocuments = jest.fn();
@@ -380,6 +411,113 @@ describe('Booking Capacity Race — Atomic Counter', () => {
   // ═══════════════════════════════════════════
   //  capacity_transfers_when_confirmed_booking_moves_slot
   // ═══════════════════════════════════════════
+  describe('same_booking_conditional_transition_protects_counter', () => {
+    function setupGetBookingByIdResponse(booking) {
+      mockBookingModel.findOne.mockReturnValue(chainable({
+        ...booking.toObject(), bookingTypeNameSnapshot: 'Test',
+        requester: { name: '', phone: '', email: '' },
+        additionalFields: [], adminNotes: booking.adminNotes || '', source: 'public',
+        createdAt: new Date(), updatedAt: new Date(),
+      }));
+    }
+
+    it('parallel_confirms_same_pending_booking_claim_capacity_once', async () => {
+      const typeId = new mongoose.Types.ObjectId();
+      const bookingId = new mongoose.Types.ObjectId();
+      const type = { _id: typeId, name: 'Test', isActive: true, capacity: 5,
+        availabilityMode: 'ALWAYS', bookingHorizonDays: 45,
+        availabilityConfig: { timezone: 'Africa/Cairo' }, dynamicFields: [] };
+      const slotDate = '2026-07-01', slotTime = '10:00';
+      const key = `${typeId}||${slotDate}||${slotTime}`;
+
+      const stored = new mockBookingModel({ _id: bookingId, bookingTypeId: typeId,
+        scheduledDate: slotDate, scheduledTime: slotTime, status: BOOKING_STATUSES.PENDING });
+      const snapshotA = new mockBookingModel({ _id: bookingId, bookingTypeId: typeId,
+        scheduledDate: slotDate, scheduledTime: slotTime, status: BOOKING_STATUSES.PENDING });
+      const snapshotB = new mockBookingModel({ _id: bookingId, bookingTypeId: typeId,
+        scheduledDate: slotDate, scheduledTime: slotTime, status: BOOKING_STATUSES.PENDING });
+      bookingStore.set(String(bookingId), stored);
+
+      mockBookingModel.findById
+        .mockResolvedValueOnce(snapshotA)
+        .mockResolvedValueOnce(snapshotB);
+      mockBookingTypeModel.findById.mockReturnValue(chainable(type));
+      setupGetBookingByIdResponse(stored);
+
+      const results = await Promise.allSettled([
+        bookingsService.updateBooking(String(bookingId), { status: BOOKING_STATUSES.CONFIRMED }, 'admin1'),
+        bookingsService.updateBooking(String(bookingId), { status: BOOKING_STATUSES.CONFIRMED }, 'admin2'),
+      ]);
+
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+      expect(results.find((r) => r.status === 'rejected').reason.errorCode)
+        .toBe('BOOKING_CONCURRENT_MODIFICATION');
+      expect(stored.status).toBe(BOOKING_STATUSES.CONFIRMED);
+      expect(counterStore.get(key).used).toBe(1);
+    });
+
+    it('parallel_cancels_same_confirmed_booking_release_capacity_once', async () => {
+      const typeId = new mongoose.Types.ObjectId();
+      const bookingId = new mongoose.Types.ObjectId();
+      const slotDate = '2026-07-01', slotTime = '10:00';
+      const key = `${typeId}||${slotDate}||${slotTime}`;
+      counterStore.set(key, {
+        _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
+        slotDate, slotTime, used: 1, capacity: 5,
+      });
+
+      const stored = new mockBookingModel({ _id: bookingId, bookingTypeId: typeId,
+        scheduledDate: slotDate, scheduledTime: slotTime, status: BOOKING_STATUSES.CONFIRMED });
+      const snapshotA = new mockBookingModel({ _id: bookingId, bookingTypeId: typeId,
+        scheduledDate: slotDate, scheduledTime: slotTime, status: BOOKING_STATUSES.CONFIRMED });
+      const snapshotB = new mockBookingModel({ _id: bookingId, bookingTypeId: typeId,
+        scheduledDate: slotDate, scheduledTime: slotTime, status: BOOKING_STATUSES.CONFIRMED });
+      bookingStore.set(String(bookingId), stored);
+
+      mockBookingModel.findById
+        .mockResolvedValueOnce(snapshotA)
+        .mockResolvedValueOnce(snapshotB);
+      setupGetBookingByIdResponse(stored);
+
+      const results = await Promise.allSettled([
+        bookingsService.updateBooking(String(bookingId), { status: BOOKING_STATUSES.CANCELLED }, 'admin1'),
+        bookingsService.updateBooking(String(bookingId), { status: BOOKING_STATUSES.CANCELLED }, 'admin2'),
+      ]);
+
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+      expect(results.find((r) => r.status === 'rejected').reason.errorCode)
+        .toBe('BOOKING_CONCURRENT_MODIFICATION');
+      expect(stored.status).toBe(BOOKING_STATUSES.CANCELLED);
+      expect(counterStore.get(key).used).toBe(0);
+    });
+
+    it('same-booking stale transition returns conflict', async () => {
+      const typeId = new mongoose.Types.ObjectId();
+      const bookingId = new mongoose.Types.ObjectId();
+      const type = { _id: typeId, name: 'Test', isActive: true, capacity: 2,
+        availabilityMode: 'ALWAYS', bookingHorizonDays: 45,
+        availabilityConfig: { timezone: 'Africa/Cairo' }, dynamicFields: [] };
+      const slotDate = '2026-07-01', slotTime = '10:00';
+      const stored = new mockBookingModel({ _id: bookingId, bookingTypeId: typeId,
+        scheduledDate: slotDate, scheduledTime: slotTime, status: BOOKING_STATUSES.CONFIRMED });
+      const staleSnapshot = new mockBookingModel({ _id: bookingId, bookingTypeId: typeId,
+        scheduledDate: slotDate, scheduledTime: slotTime, status: BOOKING_STATUSES.PENDING });
+      bookingStore.set(String(bookingId), stored);
+
+      mockBookingModel.findById.mockResolvedValue(staleSnapshot);
+      mockBookingTypeModel.findById.mockReturnValue(chainable(type));
+
+      await expect(
+        bookingsService.updateBooking(String(bookingId), { status: BOOKING_STATUSES.CONFIRMED }, 'admin1')
+      ).rejects.toMatchObject({
+        errorCode: 'BOOKING_CONCURRENT_MODIFICATION',
+        statusCode: 409,
+      });
+    });
+  });
+
   describe('capacity_transfers_when_confirmed_booking_moves_slot', () => {
     it('should not change capacity when re-confirming an already CONFIRMED booking', async () => {
       const typeId = new mongoose.Types.ObjectId();
@@ -412,7 +550,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
   //  failed_update_does_not_leak_capacity_claim
   // ═══════════════════════════════════════════════
   describe('failed_update_does_not_leak_capacity_claim', () => {
-    it('should release the claim if booking.save() fails after claiming', async () => {
+    it('failed_conditional_update_releases_claim', async () => {
       const typeId = new mongoose.Types.ObjectId();
       const type = { _id: typeId, name: 'Test', isActive: true, capacity: 2,
         availabilityMode: 'ALWAYS', bookingHorizonDays: 45,
@@ -422,17 +560,19 @@ describe('Booking Capacity Race — Atomic Counter', () => {
 
       const b = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
         scheduledDate: slotDate, scheduledTime: slotTime, status: BOOKING_STATUSES.PENDING });
-      b.save.mockRejectedValue(new Error('DB write error'));
 
       mockBookingModel.findById.mockResolvedValue(b);
       mockBookingTypeModel.findById.mockReturnValue(chainable(type));
+      mockBookingModel.findOneAndUpdate.mockResolvedValueOnce(null);
 
       await expect(
         bookingsService.updateBooking(b._id.toString(),
           { status: BOOKING_STATUSES.CONFIRMED }, 'admin1')
-      ).rejects.toThrow('DB write error');
+      ).rejects.toMatchObject({
+        errorCode: 'BOOKING_CONCURRENT_MODIFICATION',
+        statusCode: 409,
+      });
 
-      // The claim should have been released
       const counter = counterStore.get(key);
       expect(counter ? counter.used : 0).toBeLessThanOrEqual(0);
     });

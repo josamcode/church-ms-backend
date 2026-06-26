@@ -161,6 +161,18 @@ jest.mock('../../src/modules/divineLiturgies/divineLiturgyAttendance.model', () 
     return null;
   });
 
+  MockAttendance.create = jest.fn().mockImplementation(async (data) => {
+    const key = `${data.entryType}|${String(data.serviceId)}|${data.attendanceDate}`;
+    if (mockAttendanceStore.has(key)) {
+      const error = new Error('E11000 duplicate key error');
+      error.code = 11000;
+      throw error;
+    }
+    const doc = mockAttendanceDoc(data);
+    mockAttendanceStore.set(key, doc);
+    return { ...doc, toObject: () => ({ ...doc }) };
+  });
+
   MockAttendance._setConflictNextUpdate = (val) => { mockConflictNextUpdate = val; };
 
   MockAttendance.DIVINE_LITURGY_ATTENDANCE_ENTRY_TYPES = ['recurring', 'exception'];
@@ -252,6 +264,91 @@ describe('Divine Liturgy Attendance Concurrency', () => {
   // ═══════════════════════════════════════════════
   //  2. divine_liturgy_attendance_stale_update_returns_conflict
   // ═══════════════════════════════════════════════
+  describe('divine_liturgy_first_write_parallel_updates', () => {
+    it('divine_liturgy_first_write_parallel_updates_only_one_succeeds', async () => {
+      const serviceId = setupRecurringService('Wednesday');
+      const actorId = new mongoose.Types.ObjectId();
+      const userA = new mongoose.Types.ObjectId();
+      const userB = new mongoose.Types.ObjectId();
+
+      const results = await Promise.allSettled([
+        divineLiturgiesService.updateAttendance(
+          'recurring', String(serviceId), '2026-06-17',
+          [String(userA)],
+          { actorUserId: String(actorId), userPermissions: ['DIVINE_LITURGIES_ATTENDANCE_MANAGE'] }
+        ),
+        divineLiturgiesService.updateAttendance(
+          'recurring', String(serviceId), '2026-06-17',
+          [String(userB)],
+          { actorUserId: String(actorId), userPermissions: ['DIVINE_LITURGIES_ATTENDANCE_MANAGE'] }
+        ),
+      ]);
+
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+
+      const stored = mockAttendanceStore.get(`recurring|${String(serviceId)}|2026-06-17`);
+      expect(stored).toBeDefined();
+      expect(stored.attendedUserIds.map(String)).toHaveLength(1);
+    });
+
+    it('divine_liturgy_first_write_loser_returns_409', async () => {
+      const serviceId = setupRecurringService('Wednesday');
+      const actorId = new mongoose.Types.ObjectId();
+      const userA = new mongoose.Types.ObjectId();
+      const userB = new mongoose.Types.ObjectId();
+
+      const results = await Promise.allSettled([
+        divineLiturgiesService.updateAttendance(
+          'recurring', String(serviceId), '2026-06-17',
+          [String(userA)],
+          { actorUserId: String(actorId), userPermissions: ['DIVINE_LITURGIES_ATTENDANCE_MANAGE'] }
+        ),
+        divineLiturgiesService.updateAttendance(
+          'recurring', String(serviceId), '2026-06-17',
+          [String(userB)],
+          { actorUserId: String(actorId), userPermissions: ['DIVINE_LITURGIES_ATTENDANCE_MANAGE'] }
+        ),
+      ]);
+
+      const rejected = results.find((result) => result.status === 'rejected');
+      expect(rejected.reason).toBeInstanceOf(ApiError);
+      expect(rejected.reason.statusCode).toBe(409);
+      expect(rejected.reason.errorCode).toBe('ATTENDANCE_CONCURRENT_MODIFICATION');
+    });
+
+    it('divine_liturgy_first_write_loser_does_not_update_user_snapshots', async () => {
+      const serviceId = setupRecurringService('Wednesday');
+      const actorId = new mongoose.Types.ObjectId();
+      const userA = new mongoose.Types.ObjectId();
+      const userB = new mongoose.Types.ObjectId();
+
+      const results = await Promise.allSettled([
+        divineLiturgiesService.updateAttendance(
+          'recurring', String(serviceId), '2026-06-17',
+          [String(userA)],
+          { actorUserId: String(actorId), userPermissions: ['DIVINE_LITURGIES_ATTENDANCE_MANAGE'] }
+        ),
+        divineLiturgiesService.updateAttendance(
+          'recurring', String(serviceId), '2026-06-17',
+          [String(userB)],
+          { actorUserId: String(actorId), userPermissions: ['DIVINE_LITURGIES_ATTENDANCE_MANAGE'] }
+        ),
+      ]);
+
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+      expect(UserModel.updateMany).toHaveBeenCalledTimes(2);
+
+      const pushedUserIds = UserModel.updateMany.mock.calls
+        .filter((call) => call[1]?.$push?.divineLiturgyAttendance)
+        .flatMap((call) => call[0]._id.$in.map(String));
+      const stored = mockAttendanceStore.get(`recurring|${String(serviceId)}|2026-06-17`);
+
+      expect(pushedUserIds.sort()).toEqual(stored.attendedUserIds.map(String).sort());
+    });
+  });
+
   describe('divine_liturgy_attendance_stale_update_returns_conflict', () => {
     it('should return 409 when record was modified concurrently', async () => {
       const serviceId = setupRecurringService('Wednesday');

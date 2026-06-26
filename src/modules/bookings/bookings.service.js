@@ -1357,6 +1357,11 @@ class BookingsService {
     }
 
     const currentStatus = booking.status;
+    const currentSlot = {
+      bookingTypeId: booking.bookingTypeId,
+      scheduledDate: booking.scheduledDate,
+      scheduledTime: booking.scheduledTime || '',
+    };
     const nextStatus =
       payload.status !== undefined ? payload.status : currentStatus;
 
@@ -1376,9 +1381,9 @@ class BookingsService {
       const type = await this._resolveBookableType(booking.bookingTypeId);
       const capacity = type.capacity || 1;
       claimed = await this._claimSlotCapacity(
-        booking.bookingTypeId,
-        booking.scheduledDate,
-        booking.scheduledTime || '',
+        currentSlot.bookingTypeId,
+        currentSlot.scheduledDate,
+        currentSlot.scheduledTime,
         capacity
       );
 
@@ -1391,44 +1396,77 @@ class BookingsService {
     }
 
     // ── Apply the update ──
+    const update = {
+      $set: {
+        updatedBy: actorUserId,
+      },
+    };
     if (payload.status !== undefined) {
-      booking.status = payload.status;
+      update.$set.status = payload.status;
     }
-
     if (payload.adminNotes !== undefined) {
-      booking.adminNotes = payload.adminNotes || undefined;
+      if (payload.adminNotes) {
+        update.$set.adminNotes = payload.adminNotes;
+      } else {
+        update.$unset = { adminNotes: '' };
+      }
     }
 
-    booking.updatedBy = actorUserId;
-
+    let updatedBooking = null;
     try {
-      await booking.save();
-    } catch (saveErr) {
-      // Compensation: if we claimed capacity but the save failed, release it
+      updatedBooking = await Booking.findOneAndUpdate(
+        {
+          _id: booking._id,
+          status: currentStatus,
+          bookingTypeId: currentSlot.bookingTypeId,
+          scheduledDate: currentSlot.scheduledDate,
+          scheduledTime: booking.scheduledTime || null,
+        },
+        update,
+        { new: true }
+      );
+    } catch (writeErr) {
       if (claimed) {
         await this._releaseSlotCapacity(
-          booking.bookingTypeId,
-          booking.scheduledDate,
-          booking.scheduledTime || ''
+          currentSlot.bookingTypeId,
+          currentSlot.scheduledDate,
+          currentSlot.scheduledTime
         ).catch(() => {
-          // Best-effort release; surface the original save error
+          // Best-effort release; surface the original write error
         });
       }
-      throw saveErr;
+      throw writeErr;
+    }
+
+    if (!updatedBooking) {
+      if (claimed) {
+        await this._releaseSlotCapacity(
+          currentSlot.bookingTypeId,
+          currentSlot.scheduledDate,
+          currentSlot.scheduledTime
+        ).catch(() => {
+          // Best-effort release; surface the conflict
+        });
+      }
+
+      throw ApiError.conflict(
+        'This booking was modified by another user. Please refresh and try again.',
+        'BOOKING_CONCURRENT_MODIFICATION'
+      );
     }
 
     // ── Release capacity AFTER successful write ──
     if (needsRelease) {
       await this._releaseSlotCapacity(
-        booking.bookingTypeId,
-        booking.scheduledDate,
-        booking.scheduledTime || ''
+        currentSlot.bookingTypeId,
+        currentSlot.scheduledDate,
+        currentSlot.scheduledTime
       ).catch(() => {
         // Best-effort release; the booking status change succeeded
       });
     }
 
-    return this.getBookingById(booking._id);
+    return this.getBookingById(updatedBooking._id);
   }
 
   async uploadImageToStorage(file, { bookingTypeId, fieldKey } = {}) {

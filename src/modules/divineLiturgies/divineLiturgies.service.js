@@ -988,30 +988,30 @@ class DivineLiturgiesService {
         );
       }
     } else {
-      // New record — upsert with $setOnInsert prevents duplicate creation
-      record = await DivineLiturgyAttendance.findOneAndUpdate(
-        {
+      // New record: create directly so duplicate-key losers return conflict.
+      try {
+        record = await DivineLiturgyAttendance.create({
           entryType: attendanceService.entryType,
           serviceId: attendanceService.serviceId,
+          serviceType: attendanceService.service.serviceType,
           attendanceDate: normalizedAttendanceDate,
-        },
-        {
-          $setOnInsert: {
-            entryType: attendanceService.entryType,
-            serviceId: attendanceService.serviceId,
-            serviceType: attendanceService.service.serviceType,
-            attendanceDate: normalizedAttendanceDate,
-            recordedBy: actorObjectId,
-            attendedUserIds: nextAttendedUserIds.map((userId) =>
-              this._toObjectId(userId, 'attendedUserIds')
-            ),
-            updatedBy: actorObjectId,
-            updatedAt: now,
-            auditLog: [auditEntry],
-          },
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
+          recordedBy: actorObjectId,
+          attendedUserIds: nextAttendedUserIds.map((userId) =>
+            this._toObjectId(userId, 'attendedUserIds')
+          ),
+          updatedBy: actorObjectId,
+          updatedAt: now,
+          auditLog: [auditEntry],
+        });
+      } catch (createErr) {
+        if (createErr?.code === 11000) {
+          throw ApiError.conflict(
+            'This attendance record was modified by another user. Please refresh and try again.',
+            'ATTENDANCE_CONCURRENT_MODIFICATION'
+          );
+        }
+        throw createErr;
+      }
     }
 
     const affectedUserIds = accessContext.accessLevel === 'assigned'
