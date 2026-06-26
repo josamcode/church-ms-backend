@@ -1,21 +1,27 @@
 const express = require('express');
 const multer = require('multer');
+const config = require('../../config/env');
 const landingContentController = require('./landingContent.controller');
 const landingContentValidators = require('./landingContent.validators');
 const validate = require('../../middlewares/validate');
 const { authenticateJWT } = require('../../middlewares/auth');
 const { authorizePermissions } = require('../../middlewares/permissions');
-const { uploadLimiter } = require('../../middlewares/rateLimit');
+const { publicReadLimiter, uploadLimiter } = require('../../middlewares/rateLimit');
 const { PERMISSIONS } = require('../../constants/permissions');
 
 const router = express.Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: {
+    fileSize: config.upload.maxFileSize,
+    files: 1,
+    fields: 8,
+    parts: 10,
+  },
 });
 
-router.get('/public', landingContentController.getPublicContent);
+router.get('/public', publicReadLimiter, landingContentController.getPublicContent);
 
 router.get(
   '/manage',

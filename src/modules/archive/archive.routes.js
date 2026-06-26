@@ -1,18 +1,24 @@
 const express = require('express');
 const multer = require('multer');
+const config = require('../../config/env');
 const archiveController = require('./archive.controller');
 const archiveValidators = require('./archive.validators');
 const validate = require('../../middlewares/validate');
 const { authenticateJWT } = require('../../middlewares/auth');
 const { authorizeAnyPermissions, authorizePermissions } = require('../../middlewares/permissions');
-const { uploadLimiter } = require('../../middlewares/rateLimit');
+const { publicReadLimiter, uploadLimiter } = require('../../middlewares/rateLimit');
 const { PERMISSIONS } = require('../../constants/permissions');
 
 const router = express.Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: {
+    fileSize: config.upload.maxFileSize,
+    files: 1,
+    fields: 8,
+    parts: 10,
+  },
 });
 
 const archiveWorkspacePermissions = [
@@ -24,7 +30,7 @@ const archiveWorkspacePermissions = [
   PERMISSIONS.ARCHIVE_PUBLISH,
 ];
 
-router.get('/public', archiveController.getPublicContent);
+router.get('/public', publicReadLimiter, archiveController.getPublicContent);
 
 router.get(
   '/manage',

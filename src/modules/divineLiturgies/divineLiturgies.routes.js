@@ -6,9 +6,10 @@ const divineLiturgiesValidators = require('./divineLiturgies.validators');
 const validate = require('../../middlewares/validate');
 const { authenticateJWT } = require('../../middlewares/auth');
 const { authorizeAnyPermissions, authorizePermissions } = require('../../middlewares/permissions');
+const { publicReadLimiter } = require('../../middlewares/rateLimit');
 const { PERMISSIONS } = require('../../constants/permissions');
 
-router.get('/public', divineLiturgiesController.getPublicOverview);
+router.get('/public', publicReadLimiter, divineLiturgiesController.getPublicOverview);
 
 router.get(
   '/',

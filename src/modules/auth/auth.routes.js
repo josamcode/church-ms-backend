@@ -5,32 +5,40 @@ const { authenticateJWT } = require('../../middlewares/auth');
 const { authorizePermissions } = require('../../middlewares/permissions');
 const validate = require('../../middlewares/validate');
 const authValidators = require('./auth.validators');
-const { authLimiter } = require('../../middlewares/rateLimit');
+const {
+  authLoginLimiter,
+  authSessionLimiter,
+  passwordLimiter,
+  publicReadLimiter,
+  registerLimiter,
+} = require('../../middlewares/rateLimit');
 const { PERMISSIONS } = require('../../constants/permissions');
 
 // ═══════ عام (بدون مصادقة) ═══════
 
 router.post(
   '/register',
-  authLimiter,
+  registerLimiter,
   validate(authValidators.register),
   authController.register
 );
 
 router.get(
   '/register/options',
+  publicReadLimiter,
   authController.getRegistrationOptions
 );
 
 router.post(
   '/login',
-  authLimiter,
+  authLoginLimiter,
   validate(authValidators.login),
   authController.login
 );
 
 router.post(
   '/refresh',
+  authSessionLimiter,
   validate(authValidators.refreshToken),
   authController.refresh
 );
@@ -39,6 +47,7 @@ router.post(
 
 router.post(
   '/logout',
+  authSessionLimiter,
   authenticateJWT,
   validate(authValidators.logout),
   authController.logout
@@ -63,6 +72,7 @@ router.post(
   '/change-password',
   authenticateJWT,
   authorizePermissions(PERMISSIONS.AUTH_CHANGE_PASSWORD),
+  passwordLimiter,
   validate(authValidators.changePassword),
   authController.changePassword
 );

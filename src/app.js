@@ -5,7 +5,7 @@ const mongoSanitize = require('express-mongo-sanitize');
 const hpp = require('hpp');
 const morgan = require('morgan');
 const config = require('./config/env');
-const { generalLimiter } = require('./middlewares/rateLimit');
+const { generalLimiter, apiMutationLimiter } = require('./middlewares/rateLimit');
 const requestId = require('./middlewares/requestId');
 const sanitizeRequest = require('./middlewares/sanitizeRequest');
 const notFound = require('./middlewares/notFound');
@@ -58,13 +58,14 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: config.http.jsonBodyLimit || '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: config.http.urlencodedBodyLimit || '100kb' }));
 app.use(mongoSanitize());
 app.use(hpp());
 app.use(sanitizeRequest);
 app.use(requestId);
 app.use('/api', generalLimiter);
+app.use('/api', apiMutationLimiter);
 
 if (config.env !== 'test') {
   const morganStream = {

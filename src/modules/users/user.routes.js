@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const config = require('../../config/env');
 const userController = require('./user.controller');
 const { authenticateJWT } = require('../../middlewares/auth');
 const { authorizePermissions } = require('../../middlewares/permissions');
@@ -11,7 +12,12 @@ const { uploadLimiter } = require('../../middlewares/rateLimit');
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: {
+    fileSize: config.upload.maxFileSize,
+    files: 1,
+    fields: 8,
+    parts: 10,
+  },
 });
 
 // ═══════ جميع المسارات تتطلب مصادقة ═══════

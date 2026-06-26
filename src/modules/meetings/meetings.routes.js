@@ -13,11 +13,21 @@ const { PERMISSIONS } = require('../../constants/permissions');
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: {
+    fileSize: config.upload.maxFileSize,
+    files: 1,
+    fields: 8,
+    parts: 10,
+  },
 });
 const documentationUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: config.upload.maxDocumentationFileSize },
+  limits: {
+    fileSize: config.upload.maxDocumentationFileSize,
+    files: 1,
+    fields: 12,
+    parts: 14,
+  },
 });
 
 router.post(

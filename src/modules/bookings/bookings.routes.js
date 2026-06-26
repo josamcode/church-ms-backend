@@ -1,32 +1,43 @@
 const express = require('express');
 const multer = require('multer');
 
+const config = require('../../config/env');
 const bookingsController = require('./bookings.controller');
 const bookingsValidators = require('./bookings.validators');
 const validate = require('../../middlewares/validate');
 const { authenticateJWT, optionalAuth } = require('../../middlewares/auth');
 const { authorizeAnyPermissions, authorizePermissions } = require('../../middlewares/permissions');
-const { publicBookingLimiter, uploadLimiter } = require('../../middlewares/rateLimit');
+const {
+  publicBookingLimiter,
+  publicBookingUploadLimiter,
+  publicReadLimiter,
+} = require('../../middlewares/rateLimit');
 const { PERMISSIONS } = require('../../constants/permissions');
 
 const router = express.Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: {
+    fileSize: config.upload.maxFileSize,
+    files: 1,
+    fields: 8,
+    parts: 10,
+  },
 });
 
-router.get('/public/types', bookingsController.listPublicBookingTypes);
+router.get('/public/types', publicReadLimiter, bookingsController.listPublicBookingTypes);
 
 router.get(
   '/public/types/:id/slots',
+  publicReadLimiter,
   validate(bookingsValidators.listPublicSlots),
   bookingsController.getPublicSlots
 );
 
 router.post(
   '/public/upload-image',
-  uploadLimiter,
+  publicBookingUploadLimiter,
   upload.single('image'),
   validate(bookingsValidators.publicImageUpload),
   bookingsController.uploadPublicImage

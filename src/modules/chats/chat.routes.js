@@ -2,6 +2,7 @@ const express = require('express');
 const { authenticateJWT } = require('../../middlewares/auth');
 const { authorizeAnyPermissions, authorizePermissions } = require('../../middlewares/permissions');
 const validate = require('../../middlewares/validate');
+const { chatMessageLimiter } = require('../../middlewares/rateLimit');
 const { PERMISSIONS } = require('../../constants/permissions');
 const chatController = require('./chat.controller');
 const chatValidators = require('./chat.validators');
@@ -72,6 +73,7 @@ router.get(
 router.post(
   '/:id/messages',
   authorizePermissions(PERMISSIONS.CHATS_SEND),
+  chatMessageLimiter,
   validate(chatValidators.sendMessage),
   chatController.sendMessage
 );

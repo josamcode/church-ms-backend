@@ -1,5 +1,6 @@
 const express = require('express');
 const multer = require('multer');
+const config = require('../../config/env');
 
 const router = express.Router();
 const notificationsController = require('./notifications.controller');
@@ -12,7 +13,12 @@ const { PERMISSIONS } = require('../../constants/permissions');
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: {
+    fileSize: config.upload.maxFileSize,
+    files: 1,
+    fields: 8,
+    parts: 10,
+  },
 });
 
 router.get(

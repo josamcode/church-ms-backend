@@ -232,6 +232,9 @@ const config = {
 
   http: {
     trustProxy: parseTrustProxy(process.env.TRUST_PROXY, isProduction ? 1 : false),
+    jsonBodyLimit: String(process.env.JSON_BODY_LIMIT || '1mb').trim() || '1mb',
+    urlencodedBodyLimit:
+      String(process.env.URLENCODED_BODY_LIMIT || '100kb').trim() || '100kb',
   },
 
   site: {
