@@ -47,9 +47,7 @@ const documentationAssetSchema = Joi.object({
 const personLinkSchema = Joi.object({
   userId: objectIdField.optional(),
   name: Joi.string().trim().min(2).max(160).optional(),
-})
-  .or('userId', 'name')
-  .required();
+}).or('userId', 'name');
 
 const sectorOfficialSchema = Joi.object({
   userId: objectIdField.optional(),
