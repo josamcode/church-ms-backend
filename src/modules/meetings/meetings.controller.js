@@ -331,7 +331,43 @@ const uploadMeetingAvatarImage = asyncHandler(async (req, res) => {
   });
 });
 
+const getPublicMeetings = asyncHandler(async (_req, res) => {
+  const data = await meetingsService.getPublicMeetings();
+  return ApiResponse.success(res, {
+    message: 'Public meetings loaded successfully',
+    data,
+  });
+});
+
+const getPublicMeeting = asyncHandler(async (req, res) => {
+  const data = await meetingsService.getPublicMeetingById(req.params.id);
+  return ApiResponse.success(res, {
+    message: 'Public meeting loaded successfully',
+    data,
+  });
+});
+
+const getPublicSectors = asyncHandler(async (_req, res) => {
+  const data = await meetingsService.getPublicSectors();
+  return ApiResponse.success(res, {
+    message: 'Public sectors loaded successfully',
+    data,
+  });
+});
+
+const getPublicSector = asyncHandler(async (req, res) => {
+  const data = await meetingsService.getPublicSectorById(req.params.id);
+  return ApiResponse.success(res, {
+    message: 'Public sector loaded successfully',
+    data,
+  });
+});
+
 module.exports = {
+  getPublicMeetings,
+  getPublicMeeting,
+  getPublicSectors,
+  getPublicSector,
   createSector,
   listSectors,
   getSectorById,

@@ -8,7 +8,7 @@ const meetingsValidators = require('./meetings.validators');
 const validate = require('../../middlewares/validate');
 const { authenticateJWT } = require('../../middlewares/auth');
 const { authorizeAnyPermissions, authorizePermissions } = require('../../middlewares/permissions');
-const { uploadLimiter } = require('../../middlewares/rateLimit');
+const { uploadLimiter, publicReadLimiter } = require('../../middlewares/rateLimit');
 const { PERMISSIONS } = require('../../constants/permissions');
 
 const upload = multer({
@@ -29,6 +29,15 @@ const documentationUpload = multer({
     parts: 14,
   },
 });
+
+// PUBLIC (no-login) read-only routes.
+// SECURITY: These must be registered BEFORE the authenticated `/:id` and
+// `/sectors/:id` routes so Express does not match "public" as an `:id` and apply
+// auth. Do NOT add auth/permission middleware to these routes.
+router.get('/sectors/public', publicReadLimiter, meetingsController.getPublicSectors);
+router.get('/sectors/public/:id', publicReadLimiter, meetingsController.getPublicSector);
+router.get('/public', publicReadLimiter, meetingsController.getPublicMeetings);
+router.get('/public/:id', publicReadLimiter, meetingsController.getPublicMeeting);
 
 router.post(
   '/sectors',

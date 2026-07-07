@@ -2872,6 +2872,97 @@ class MeetingsService {
       responsibilities,
     };
   }
+
+  // ---------------------------------------------------------------------------
+  // PUBLIC (no-login) read-only projections.
+  // SECURITY: These methods MUST return only safe, non-personal fields via an
+  // explicit `.select(...).lean()` whitelist and explicit field mapping. Never
+  // return the raw document, never spread it, and never expose servants,
+  // committees, notes, attendance, officials, or any user references.
+  // ---------------------------------------------------------------------------
+
+  _mapPublicMeeting(meeting) {
+    if (!meeting) return null;
+    return {
+      _id: this._toId(meeting._id),
+      name: meeting.name || '',
+      day: meeting.day || '',
+      time: meeting.time || '',
+      sector: meeting.sectorId
+        ? {
+            _id: this._toId(meeting.sectorId._id || meeting.sectorId),
+            name: meeting.sectorId.name || '',
+          }
+        : null,
+    };
+  }
+
+  _mapPublicSector(sector) {
+    if (!sector) return null;
+    return {
+      _id: this._toId(sector._id),
+      name: sector.name || '',
+    };
+  }
+
+  async getPublicMeetings() {
+    const meetings = await Meeting.find({ isDeleted: { $ne: true } })
+      .select('_id name day time sectorId')
+      .populate({ path: 'sectorId', select: '_id name', match: { isDeleted: { $ne: true } } })
+      .sort({ day: 1, time: 1, name: 1 })
+      .lean();
+
+    return meetings.map((meeting) => this._mapPublicMeeting(meeting));
+  }
+
+  async getPublicMeetingById(id) {
+    const meetingId = this._toObjectId(id, 'meeting id');
+    const meeting = await Meeting.findOne({ _id: meetingId, isDeleted: { $ne: true } })
+      .select('_id name day time sectorId')
+      .populate({ path: 'sectorId', select: '_id name', match: { isDeleted: { $ne: true } } })
+      .lean();
+
+    if (!meeting) {
+      throw ApiError.notFound('Meeting not found', 'MEETING_NOT_FOUND');
+    }
+
+    return this._mapPublicMeeting(meeting);
+  }
+
+  async getPublicSectors() {
+    const sectors = await Sector.find({ isDeleted: { $ne: true } })
+      .select('_id name')
+      .sort({ name: 1 })
+      .lean();
+
+    return sectors.map((sector) => this._mapPublicSector(sector));
+  }
+
+  async getPublicSectorById(id) {
+    const sectorId = this._toObjectId(id, 'sector id');
+    const sector = await Sector.findOne({ _id: sectorId, isDeleted: { $ne: true } })
+      .select('_id name')
+      .lean();
+
+    if (!sector) {
+      throw ApiError.notFound('Sector not found', 'SECTOR_NOT_FOUND');
+    }
+
+    const meetings = await Meeting.find({ sectorId, isDeleted: { $ne: true } })
+      .select('_id name day time')
+      .sort({ day: 1, time: 1, name: 1 })
+      .lean();
+
+    return {
+      ...this._mapPublicSector(sector),
+      meetings: meetings.map((meeting) => ({
+        _id: this._toId(meeting._id),
+        name: meeting.name || '',
+        day: meeting.day || '',
+        time: meeting.time || '',
+      })),
+    };
+  }
 }
 
 module.exports = new MeetingsService();
