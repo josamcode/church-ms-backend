@@ -551,7 +551,7 @@ class DivineLiturgiesService {
     const usersMap = userIdsToLoad.length > 0
       ? new Map(
         (await User.find({ _id: { $in: userIdsToLoad.map((id) => this._toObjectId(id)) } })
-          .select('fullName')
+          .select('fullName avatar.url')
           .lean())
           .map((user) => [this._toId(user._id), user])
       )
@@ -563,10 +563,14 @@ class DivineLiturgiesService {
     return {
       attendanceDate,
       attendedUserIds,
-      attendedUsers: attendedUserIds.map((userId) => ({
-        id: userId,
-        fullName: usersMap.get(userId)?.fullName || '',
-      })),
+      attendedUsers: attendedUserIds.map((userId) => {
+        const user = usersMap.get(userId);
+        return {
+          id: userId,
+          fullName: user?.fullName || '',
+          avatar: user?.avatar?.url ? { url: user.avatar.url } : null,
+        };
+      }),
       updatedAt: record?.updatedAt || null,
       updatedBy: updatedById
         ? {
@@ -795,6 +799,14 @@ class DivineLiturgiesService {
     return new RegExp(escaped, 'i');
   }
 
+  _mapAttendanceUser(user) {
+    return {
+      id: this._toId(user._id),
+      fullName: user.fullName || '',
+      avatar: user?.avatar?.url ? { url: user.avatar.url } : null,
+    };
+  }
+
   async getAttendanceContext(
     entryType,
     id,
@@ -821,7 +833,7 @@ class DivineLiturgiesService {
     const [totalUsers, fetchedUsers] = await Promise.all([
       User.countDocuments(baseFilter),
       User.find(pageFilter)
-        .select('fullName')
+        .select('fullName avatar.url')
         .sort({ fullName: 1, _id: 1 })
         .skip(skip)
         .limit(safeLimit + 1)
@@ -833,10 +845,7 @@ class DivineLiturgiesService {
 
     return {
       service: attendanceService.service,
-      users: pageUsers.map((user) => ({
-        id: this._toId(user._id),
-        fullName: user.fullName || '',
-      })),
+      users: pageUsers.map((user) => this._mapAttendanceUser(user)),
       totalUsers,
       page: safePage,
       limit: safeLimit,
@@ -855,15 +864,12 @@ class DivineLiturgiesService {
     await this._loadAttendanceService(entryType, id);
     const baseFilter = this._buildAttendanceUserFilter(accessContext);
     const users = await User.find(baseFilter)
-      .select('fullName')
+      .select('fullName avatar.url')
       .sort({ fullName: 1, _id: 1 })
       .lean();
 
     return {
-      users: users.map((user) => ({
-        id: this._toId(user._id),
-        fullName: user.fullName || '',
-      })),
+      users: users.map((user) => this._mapAttendanceUser(user)),
     };
   }
 
