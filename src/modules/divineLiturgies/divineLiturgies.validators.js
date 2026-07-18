@@ -30,6 +30,15 @@ const attendanceParams = {
   }),
 };
 
+const attendanceContextQuery = {
+  params: attendanceParams.params,
+  query: Joi.object({
+    search: Joi.string().trim().allow('').max(200).optional(),
+    page: Joi.number().integer().min(1).optional(),
+    limit: Joi.number().integer().min(1).max(500).optional(),
+  }),
+};
+
 const createRecurring = {
   body: Joi.object({
     serviceType: Joi.string()
@@ -138,6 +147,7 @@ const updateAttendance = {
 module.exports = {
   idParam,
   attendanceParams,
+  attendanceContextQuery,
   attendanceQuery,
   updateAttendance,
   createRecurring,

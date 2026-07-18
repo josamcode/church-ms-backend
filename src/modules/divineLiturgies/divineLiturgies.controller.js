@@ -22,9 +22,27 @@ const getAttendanceContext = asyncHandler(async (req, res) => {
   const data = await divineLiturgiesService.getAttendanceContext(req.params.entryType, req.params.id, {
     actorUserId: req.user.id,
     userPermissions: req.userPermissions,
+    search: req.query.search,
+    page: req.query.page,
+    limit: req.query.limit,
   });
   return ApiResponse.success(res, {
     message: 'Divine liturgy attendance context loaded successfully',
+    data,
+  });
+});
+
+const getAttendanceEligibleUsers = asyncHandler(async (req, res) => {
+  const data = await divineLiturgiesService.getAttendanceEligibleUsers(
+    req.params.entryType,
+    req.params.id,
+    {
+      actorUserId: req.user.id,
+      userPermissions: req.userPermissions,
+    }
+  );
+  return ApiResponse.success(res, {
+    message: 'Divine liturgy attendance eligible users loaded successfully',
     data,
   });
 });
@@ -122,6 +140,7 @@ module.exports = {
   getOverview,
   getPublicOverview,
   getAttendanceContext,
+  getAttendanceEligibleUsers,
   getAttendance,
   updateAttendance,
   createRecurring,

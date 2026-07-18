@@ -31,8 +31,20 @@ router.get(
     PERMISSIONS.DIVINE_LITURGIES_MANAGE,
     PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE_ASSIGNED_USERS
   ),
-  validate(divineLiturgiesValidators.attendanceParams),
+  validate(divineLiturgiesValidators.attendanceContextQuery),
   divineLiturgiesController.getAttendanceContext
+);
+
+router.get(
+  '/attendance/:entryType/:id/users',
+  authenticateJWT,
+  authorizeAnyPermissions(
+    PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE,
+    PERMISSIONS.DIVINE_LITURGIES_MANAGE,
+    PERMISSIONS.DIVINE_LITURGIES_ATTENDANCE_MANAGE_ASSIGNED_USERS
+  ),
+  validate(divineLiturgiesValidators.attendanceParams),
+  divineLiturgiesController.getAttendanceEligibleUsers
 );
 
 router.get(

@@ -22,6 +22,9 @@ const DAY_ORDER = DAYS_OF_WEEK.reduce((acc, day, index) => {
   return acc;
 }, {});
 
+const ATTENDANCE_USERS_DEFAULT_LIMIT = 100;
+const ATTENDANCE_USERS_MAX_LIMIT = 500;
+
 class DivineLiturgiesService {
   _toObjectId(id, fieldName = 'id') {
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -533,7 +536,18 @@ class DivineLiturgiesService {
     const viewerAuditEntry = this._extractAttendanceViewerAuditEntry(record, actorUserId);
     const updatedById = this._toId(record?.updatedBy || record?.recordedBy);
     const viewerUpdatedById = this._toId(viewerAuditEntry?.actorUserId);
-    const userIdsToLoad = [...new Set([updatedById, viewerUpdatedById].filter(Boolean))];
+
+    const attendedUserIds = [...new Set(
+      (record?.attendedUserIds || [])
+        .map((value) => this._toId(value))
+        .filter((userId) => userId && (!scopedUserIds || scopedUserIds.has(userId)))
+    )];
+
+    const userIdsToLoad = [...new Set([
+      ...attendedUserIds,
+      updatedById,
+      viewerUpdatedById,
+    ].filter(Boolean))];
     const usersMap = userIdsToLoad.length > 0
       ? new Map(
         (await User.find({ _id: { $in: userIdsToLoad.map((id) => this._toObjectId(id)) } })
@@ -548,11 +562,11 @@ class DivineLiturgiesService {
 
     return {
       attendanceDate,
-      attendedUserIds: [...new Set(
-        (record?.attendedUserIds || [])
-          .map((value) => this._toId(value))
-          .filter((userId) => userId && (!scopedUserIds || scopedUserIds.has(userId)))
-      )],
+      attendedUserIds,
+      attendedUsers: attendedUserIds.map((userId) => ({
+        id: userId,
+        fullName: usersMap.get(userId)?.fullName || '',
+      })),
       updatedAt: record?.updatedAt || null,
       updatedBy: updatedById
         ? {
@@ -762,34 +776,94 @@ class DivineLiturgiesService {
     };
   }
 
-  async getAttendanceContext(entryType, id, { actorUserId, userPermissions = [] } = {}) {
+  _buildAttendanceUserFilter(accessContext) {
+    if (accessContext.accessLevel === 'full') {
+      return { isDeleted: { $ne: true } };
+    }
+    return {
+      _id: {
+        $in: [...accessContext.scopedUserIds].map((userId) => this._toObjectId(userId, 'userId')),
+      },
+      isDeleted: { $ne: true },
+    };
+  }
+
+  _buildUserNameSearchRegex(search) {
+    const term = String(search || '').trim();
+    if (!term) return null;
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(escaped, 'i');
+  }
+
+  async getAttendanceContext(
+    entryType,
+    id,
+    { actorUserId, userPermissions = [], search, page, limit } = {}
+  ) {
     const accessContext = await this._resolveAttendanceAccess({ actorUserId, userPermissions });
     if (!accessContext.allowed) {
       throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
     }
 
     const attendanceService = await this._loadAttendanceService(entryType, id);
-    const userFilter = accessContext.accessLevel === 'full'
-      ? { isDeleted: { $ne: true } }
-      : {
-          _id: {
-            $in: [...accessContext.scopedUserIds].map((userId) => this._toObjectId(userId, 'userId')),
-          },
-          isDeleted: { $ne: true },
-        };
-    const users = await User.find(userFilter)
+    const baseFilter = this._buildAttendanceUserFilter(accessContext);
+
+    const safeLimit = Math.min(
+      Math.max(parseInt(limit, 10) || ATTENDANCE_USERS_DEFAULT_LIMIT, 1),
+      ATTENDANCE_USERS_MAX_LIMIT
+    );
+    const safePage = Math.max(parseInt(page, 10) || 1, 1);
+    const skip = (safePage - 1) * safeLimit;
+
+    const searchRegex = this._buildUserNameSearchRegex(search);
+    const pageFilter = searchRegex ? { ...baseFilter, fullName: searchRegex } : baseFilter;
+
+    const [totalUsers, fetchedUsers] = await Promise.all([
+      User.countDocuments(baseFilter),
+      User.find(pageFilter)
+        .select('fullName')
+        .sort({ fullName: 1, _id: 1 })
+        .skip(skip)
+        .limit(safeLimit + 1)
+        .lean(),
+    ]);
+
+    const hasMore = fetchedUsers.length > safeLimit;
+    const pageUsers = hasMore ? fetchedUsers.slice(0, safeLimit) : fetchedUsers;
+
+    return {
+      service: attendanceService.service,
+      users: pageUsers.map((user) => ({
+        id: this._toId(user._id),
+        fullName: user.fullName || '',
+      })),
+      totalUsers,
+      page: safePage,
+      limit: safeLimit,
+      hasMore,
+      canManageAttendance: true,
+      attendanceAccessLevel: accessContext.accessLevel,
+    };
+  }
+
+  async getAttendanceEligibleUsers(entryType, id, { actorUserId, userPermissions = [] } = {}) {
+    const accessContext = await this._resolveAttendanceAccess({ actorUserId, userPermissions });
+    if (!accessContext.allowed) {
+      throw ApiError.forbidden('Missing permission for this process', 'PERMISSION_DENIED');
+    }
+
+    await this._loadAttendanceService(entryType, id);
+    const baseFilter = this._buildAttendanceUserFilter(accessContext);
+    const users = await User.find(baseFilter)
       .select('fullName')
       .sort({ fullName: 1, _id: 1 })
       .lean();
 
     return {
-      service: attendanceService.service,
       users: users.map((user) => ({
         id: this._toId(user._id),
         fullName: user.fullName || '',
       })),
-      canManageAttendance: true,
-      attendanceAccessLevel: accessContext.accessLevel,
     };
   }
 
@@ -826,6 +900,7 @@ class DivineLiturgiesService {
       return {
         attendanceDate: normalizedAttendanceDate,
         attendedUserIds: [],
+        attendedUsers: [],
         updatedAt: null,
         updatedBy: null,
         viewerUpdatedAt: null,
@@ -884,6 +959,7 @@ class DivineLiturgiesService {
         return {
           attendanceDate: normalizedAttendanceDate,
           attendedUserIds: [],
+          attendedUsers: [],
           updatedAt: null,
           updatedBy: null,
           viewerUpdatedAt: null,
