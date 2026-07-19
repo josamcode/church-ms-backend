@@ -27,6 +27,7 @@ const {
   validateImageUpload,
 } = require('../../utils/fileUploads');
 const storageService = require('../../services/storage/storage.service');
+const { normalizeArabicComparison } = require('../../utils/arabicNormalization');
 
 class MeetingsService {
   _toObjectId(id, fieldName = 'id') {
@@ -440,11 +441,12 @@ class MeetingsService {
     return [...new Set(ids)];
   }
 
-  async _buildUserMap(ids = []) {
+  async _buildUserMap(ids = [], session = null) {
     if (!ids.length) return new Map();
-    const users = await User.find({ _id: { $in: ids }, isDeleted: { $ne: true } })
-      .select('fullName phonePrimary')
-      .lean();
+    let query = User.find({ _id: { $in: ids }, isDeleted: { $ne: true } })
+      .select('fullName phonePrimary');
+    if (session) query = query.session(session);
+    const users = await query.lean();
     return new Map(users.map((user) => [String(user._id), user]));
   }
 
@@ -945,7 +947,7 @@ class MeetingsService {
     return [...ids];
   }
 
-  async _syncMeetingLinks(meetingId, previousMeetingDoc, nextMeetingDoc) {
+  async _syncMeetingLinks(meetingId, previousMeetingDoc, nextMeetingDoc, { session = null } = {}) {
     const previousIds = new Set(this._extractLinkedUserIdsFromMeeting(previousMeetingDoc));
     const nextIds = new Set(this._extractLinkedUserIdsFromMeeting(nextMeetingDoc));
 
@@ -957,7 +959,8 @@ class MeetingsService {
       operations.push(
         User.updateMany(
           { _id: { $in: idsToAdd }, isDeleted: { $ne: true } },
-          { $addToSet: { meetingIds: this._toObjectId(meetingId) } }
+          { $addToSet: { meetingIds: this._toObjectId(meetingId) } },
+          { session }
         )
       );
     }
@@ -966,7 +969,8 @@ class MeetingsService {
       operations.push(
         User.updateMany(
           { _id: { $in: idsToRemove }, isDeleted: { $ne: true } },
-          { $pull: { meetingIds: this._toObjectId(meetingId) } }
+          { $pull: { meetingIds: this._toObjectId(meetingId) } },
+          { session }
         )
       );
     }
@@ -2740,6 +2744,137 @@ class MeetingsService {
     await this._syncMeetingLinks(meeting._id, previousSnapshot, meeting.toObject());
 
     return this.getMeetingById(meeting._id);
+  }
+
+  /**
+   * Idempotently merges one import group without deleting or moving any existing link.
+   * This is intentionally narrow so offline imports reuse the meeting model validation,
+   * user-link synchronization, and duplicate/conflict rules in-process.
+   */
+  async applyChurchServiceImportGroup(
+    { meetingId, groupName, servantUserIds = [], memberUserIds = [], actorUserId },
+    { session = null } = {}
+  ) {
+    const meetingObjectId = this._toObjectId(meetingId, 'meetingId');
+    const actorObjectId = this._toObjectId(actorUserId, 'actorUserId');
+    const normalizedGroupName = normalizeArabicComparison(groupName);
+    if (!normalizedGroupName) {
+      throw ApiError.badRequest('Group name is required', 'VALIDATION_ERROR');
+    }
+
+    const requestedServantIds = [...new Set(servantUserIds.map((id) => this._toId(this._toObjectId(id, 'servantUserId'))))];
+    const requestedMemberIds = [...new Set(memberUserIds.map((id) => this._toId(this._toObjectId(id, 'memberUserId'))))];
+    const requestedUserIds = [...new Set([...requestedServantIds, ...requestedMemberIds])];
+    const [meeting, actor, userMap] = await Promise.all([
+      Meeting.findOne({ _id: meetingObjectId, isDeleted: { $ne: true } }).session(session),
+      User.findOne({ _id: actorObjectId, isDeleted: { $ne: true } })
+        .select('_id role accountStatus isLocked')
+        .session(session)
+        .lean(),
+      this._buildUserMap(requestedUserIds, session),
+    ]);
+    if (!meeting) throw ApiError.notFound('Meeting was not found', 'RESOURCE_NOT_FOUND');
+    if (!actor) throw ApiError.notFound('Actor user was not found', 'USER_NOT_FOUND');
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(actor.role) || actor.accountStatus !== 'approved' || actor.isLocked) {
+      throw ApiError.forbidden('Apply actor must be an approved, unlocked administrator', 'PERMISSION_DENIED');
+    }
+    if (userMap.size !== requestedUserIds.length) {
+      throw ApiError.badRequest('One or more linked users were not found', 'USER_NOT_FOUND');
+    }
+
+    const allGroupNames = this._normalizeUniqueStrings([
+      ...(meeting.groups || []),
+      ...(meeting.groupAssignments || []).map((entry) => entry.group),
+      ...(meeting.servants || []).flatMap((servant) => [
+        ...(servant.groupsManaged || []),
+        ...(servant.groupAssignments || []).map((entry) => entry.group),
+      ]),
+    ]);
+    const equivalentNames = allGroupNames.filter(
+      (name) => normalizeArabicComparison(name) === normalizedGroupName
+    );
+    if (equivalentNames.length > 1) {
+      throw ApiError.conflict('Multiple existing groups match the requested group', 'DUPLICATE_GROUP');
+    }
+    const targetGroupName = equivalentNames[0] || this._normalizeText(groupName);
+    const previousSnapshot = meeting.toObject();
+
+    const existingGroupsByMember = new Map();
+    const recordMemberGroups = (assignment) => {
+      const assignmentName = this._normalizeText(assignment?.group);
+      (assignment?.servedUserIds || []).forEach((memberId) => {
+        const id = this._toId(memberId);
+        if (!existingGroupsByMember.has(id)) existingGroupsByMember.set(id, new Set());
+        existingGroupsByMember.get(id).add(assignmentName);
+      });
+    };
+    (meeting.groupAssignments || []).forEach(recordMemberGroups);
+    (meeting.servants || []).forEach((servant) => (servant.groupAssignments || []).forEach(recordMemberGroups));
+    for (const memberId of requestedMemberIds) {
+      const conflictingGroups = [...(existingGroupsByMember.get(memberId) || [])].filter(
+        (name) => normalizeArabicComparison(name) !== normalizedGroupName
+      );
+      if (conflictingGroups.length) {
+        throw ApiError.conflict(
+          `User ${memberId} is already assigned to another group in this meeting`,
+          'GROUP_MEMBERSHIP_CONFLICT'
+        );
+      }
+    }
+
+    meeting.groups = this._normalizeUniqueStrings([...(meeting.groups || []), targetGroupName]);
+    const meetingAssignments = this._normalizeMeetingGroupAssignments(meeting.groupAssignments || []);
+    let meetingAssignment = meetingAssignments.find(
+      (entry) => normalizeArabicComparison(entry.group) === normalizedGroupName
+    );
+    if (!meetingAssignment) {
+      meetingAssignment = { group: targetGroupName, servedUserIds: [] };
+      meetingAssignments.push(meetingAssignment);
+    }
+    meetingAssignment.servedUserIds = [...new Set([
+      ...(meetingAssignment.servedUserIds || []).map((id) => this._toId(id)),
+      ...requestedMemberIds,
+    ])];
+    meeting.groupAssignments = meetingAssignments;
+    meeting.servedUserIds = [...new Set([
+      ...(meeting.servedUserIds || []).map((id) => this._toId(id)),
+      ...requestedMemberIds,
+    ])];
+
+    for (const servantId of requestedServantIds) {
+      let servant = (meeting.servants || []).find((entry) => this._toId(entry.userId) === servantId);
+      if (!servant) {
+        const [hydrated] = this._hydrateServants([{ userId: servantId }], userMap);
+        meeting.servants.push(hydrated);
+        servant = meeting.servants[meeting.servants.length - 1];
+      }
+      servant.groupsManaged = this._normalizeUniqueStrings([...(servant.groupsManaged || []), targetGroupName]);
+      const assignments = this._normalizeServantGroupAssignments(servant.groupAssignments || []);
+      let assignment = assignments.find((entry) => normalizeArabicComparison(entry.group) === normalizedGroupName);
+      if (!assignment) {
+        assignment = { group: targetGroupName, servedUserIds: [] };
+        assignments.push(assignment);
+      }
+      assignment.servedUserIds = [...new Set([
+        ...(assignment.servedUserIds || []).map((id) => this._toId(id)),
+        ...requestedMemberIds,
+      ])];
+      servant.groupAssignments = assignments;
+      servant.servedUserIds = [...new Set([
+        ...(servant.servedUserIds || []).map((id) => this._toId(id)),
+        ...requestedMemberIds,
+      ])];
+    }
+
+    meeting.updatedBy = actorObjectId;
+    await meeting.save({ session });
+    await this._syncMeetingLinks(meeting._id, previousSnapshot, meeting.toObject(), { session });
+    return {
+      meetingId: this._toId(meeting._id),
+      groupName: targetGroupName,
+      servantUserIds: requestedServantIds,
+      memberUserIds: requestedMemberIds,
+    };
   }
 
   async updateMeetingCommittees(id, committees, actorUserId) {

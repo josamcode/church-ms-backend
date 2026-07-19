@@ -16,6 +16,7 @@ const logger = require('../../utils/logger');
 const { validateImageUpload } = require('../../utils/fileUploads');
 const storageService = require('../../services/storage/storage.service');
 const { disconnectUserSockets } = require('../chats/chat.realtime');
+const importedUserService = require('./importedUser.service');
 
 const LIST_USER_SELECT = [
   '_id',
@@ -375,7 +376,7 @@ class UserService {
   /**
    * إنشاء مستخدم جديد (مع أو بدون تسجيل دخول)
    */
-  async createUser(data, createdByUserId) {
+  async createUser(data, createdByUserId, { session = null } = {}) {
     const normalizedData = await this._normalizeConfessionFatherFields(data);
 
     await this._assertRoleAndPermissionManagementAllowed({
@@ -394,7 +395,12 @@ class UserService {
     if (preparedData.email) orConditions.push({ email: preparedData.email });
     if (preparedData.nationalId) orConditions.push({ nationalId: preparedData.nationalId });
 
-    const existing = orConditions.length > 0 ? await User.findOne({ $or: orConditions }).lean() : null;
+    let existing = null;
+    if (orConditions.length > 0) {
+      let existingQuery = User.findOne({ $or: orConditions });
+      if (session) existingQuery = existingQuery.session(session);
+      existing = await existingQuery.lean();
+    }
 
     if (existing) {
       if (existing.phonePrimary === preparedData.phonePrimary) {
@@ -435,9 +441,14 @@ class UserService {
     }
 
     const user = new User(userData);
-    await user.save();
+    if (session) await user.save({ session });
+    else await user.save();
 
     return user.toSafeObject();
+  }
+
+  async createImportedUser(data, createdByUserId, { session = null } = {}) {
+    return importedUserService.createImportedUser(data, createdByUserId, { session });
   }
 
   /**
@@ -1666,6 +1677,74 @@ class UserService {
     return user.toSafeObject();
   }
 
+  /**
+   * Conflict-safe reciprocal parent/child linking for reviewed imports.
+   * It never overwrites a parent, removes family data, or creates plain-text-only links.
+   */
+  async linkImportedParentChild(
+    { childUserId, parentUserId, relation, actorUserId },
+    { session = null } = {}
+  ) {
+    if (!['father', 'mother'].includes(relation)) {
+      throw ApiError.badRequest('Imported parent relation must be father or mother', 'VALIDATION_ERROR');
+    }
+    if (!mongoose.Types.ObjectId.isValid(childUserId) || !mongoose.Types.ObjectId.isValid(parentUserId)) {
+      throw ApiError.badRequest('Invalid imported family user id', 'VALIDATION_ERROR');
+    }
+    if (String(childUserId) === String(parentUserId)) {
+      throw ApiError.badRequest('A user cannot be their own parent', 'VALIDATION_ERROR');
+    }
+
+    const queryOptions = session ? { session } : {};
+    const [child, parent, actor] = await Promise.all([
+      User.findOne({ _id: childUserId, isDeleted: { $ne: true } }, null, queryOptions),
+      User.findOne({ _id: parentUserId, isDeleted: { $ne: true } }, null, queryOptions),
+      User.findOne({ _id: actorUserId, isDeleted: { $ne: true } }, null, queryOptions).select('role accountStatus isLocked'),
+    ]);
+    if (!child || !parent) throw ApiError.notFound('Imported family user was not found', 'USER_NOT_FOUND');
+    if (!actor || ![ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(actor.role) || actor.accountStatus !== ACCOUNT_STATUSES.APPROVED || actor.isLocked) {
+      throw ApiError.forbidden('Import actor must be an approved, unlocked administrator', 'PERMISSION_DENIED');
+    }
+    const expectedParentGender = relation === 'father' ? 'male' : 'female';
+    if (parent.gender && parent.gender !== expectedParentGender) {
+      throw ApiError.conflict(`Parent gender conflicts with ${relation}`, 'FAMILY_RELATION_CONFLICT');
+    }
+
+    const existingParent = child[relation];
+    if (existingParent?.userId && String(existingParent.userId) !== String(parent._id)) {
+      throw ApiError.conflict(`Child already has a different ${relation}`, 'FAMILY_RELATION_CONFLICT');
+    }
+    const parentRole = relation === 'father' ? 'الأب' : 'الأم';
+    if (!existingParent?.userId) {
+      child[relation] = { userId: parent._id, name: parent.fullName, relationRole: parentRole };
+      child.updatedBy = actor._id;
+      child.changeLog.push({
+        by: actor._id,
+        action: 'ربط ولي أمر من استيراد معتمد',
+        changes: [{ field: relation, from: null, to: { userId: String(parent._id), name: parent.fullName } }],
+      });
+    }
+
+    const existingChild = (parent.children || []).find((entry) => String(entry.userId || '') === String(child._id));
+    if (!existingChild) {
+      parent.children.push({
+        userId: child._id,
+        name: child.fullName,
+        relationRole: child.gender === 'female' ? 'البنت' : 'الابن',
+      });
+      parent.updatedBy = actor._id;
+      parent.changeLog.push({
+        by: actor._id,
+        action: 'ربط ابن من استيراد معتمد',
+        changes: [{ field: 'children', from: null, to: { userId: String(child._id), name: child.fullName } }],
+      });
+    }
+
+    if (!existingParent?.userId) await child.save(queryOptions);
+    if (!existingChild) await parent.save(queryOptions);
+    return { childUserId: String(child._id), parentUserId: String(parent._id), relation, action: existingParent?.userId && existingChild ? 'NO_OP' : 'ADD' };
+  }
+
   _isChangingPermissionOverrides(updateData = {}) {
     return updateData.extraPermissions !== undefined || updateData.deniedPermissions !== undefined;
   }
@@ -1740,4 +1819,3 @@ class UserService {
 }
 
 module.exports = new UserService();
-

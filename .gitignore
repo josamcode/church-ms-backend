@@ -5,6 +5,7 @@ logs/
 .DS_Store
 coverage/
 tmp/
+reports/church-service-*/
 secure/
 *.xlsx
 *.archive.gz
