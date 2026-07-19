@@ -222,50 +222,137 @@ class LandingContentService {
       .lean();
   }
 
+  /**
+   * Distinct family key for a user, as a MongoDB expression.
+   *
+   * Mirrors `_normalizeText(user.familyName || user.houseName, 240).toLowerCase()`:
+   * JS `||` picks `houseName` whenever `familyName` is absent or an empty string,
+   * and `_normalizeText` is `trim()` then `slice(0, 240)` on strings (non-strings
+   * collapse to ''). `$strLenCP > 0` reproduces the `||` fallback, including the
+   * case where `familyName` is whitespace-only (truthy in JS, so it wins the `||`
+   * and then trims away to an empty — and therefore uncounted — key).
+   */
+  _familyKeyExpression() {
+    return {
+      $toLower: {
+        $substrCP: [
+          {
+            $trim: {
+              input: {
+                $let: {
+                  vars: {
+                    familyName: {
+                      $cond: [{ $eq: [{ $type: '$familyName' }, 'string'] }, '$familyName', ''],
+                    },
+                    houseName: {
+                      $cond: [{ $eq: [{ $type: '$houseName' }, 'string'] }, '$houseName', ''],
+                    },
+                  },
+                  in: {
+                    $cond: [{ $gt: [{ $strLenCP: '$$familyName' }, 0] }, '$$familyName', '$$houseName'],
+                  },
+                },
+              },
+            },
+          },
+          0,
+          240,
+        ],
+      },
+    };
+  }
+
+  /**
+   * These metrics are counts only, so they are computed inside MongoDB rather
+   * than by pulling documents into Node.
+   *
+   * This backs the PUBLIC landing page, so it runs for every anonymous visitor.
+   * It previously fetched every non-deleted user (~6.4k docs) and every meeting
+   * document — including each servant's `servedUserIds` / `groupAssignments`
+   * arrays — purely to size a couple of `Set`s. The connection to Atlas is
+   * throughput-bound, so that transfer, not the query, was the cost. Nothing here
+   * is permission-scoped, so aggregating is a straight win with no access
+   * implications. See `meetings.service._listMeetingsSummaryAggregate` for the
+   * same fix applied to the meetings list.
+   */
   async _computeSystemMetrics() {
     const [
-      users,
+      userMetrics,
       churchPriestsCount,
-      meetingDocs,
+      meetingMetrics,
       recurringDivineLiturgiesCount,
       recurringVespersCount,
       exceptionCount,
     ] = await Promise.all([
-      User.find({ isDeleted: { $ne: true } }).select('familyName houseName').lean(),
+      // One document out: total members + distinct family keys.
+      User.aggregate([
+        { $match: { isDeleted: { $ne: true } } },
+        { $group: { _id: this._familyKeyExpression(), members: { $sum: 1 } } },
+        {
+          $group: {
+            _id: null,
+            membersTotal: { $sum: '$members' },
+            // Empty keys were skipped by the original `if (familyKey)` guard.
+            familiesTotal: { $sum: { $cond: [{ $gt: [{ $strLenCP: '$_id' }, 0] }, 1, 0] } },
+          },
+        },
+      ]),
       ChurchPriest.countDocuments({}),
-      Meeting.find({ isDeleted: { $ne: true } })
-        .select('serviceSecretary assistantSecretaries servants')
-        .lean(),
+      // One document out: meeting count + distinct servant/leadership user ids.
+      Meeting.aggregate([
+        { $match: { isDeleted: { $ne: true } } },
+        {
+          $facet: {
+            total: [{ $count: 'value' }],
+            servants: [
+              {
+                $project: {
+                  userIds: {
+                    $concatArrays: [
+                      ['$serviceSecretary.userId'],
+                      {
+                        $map: {
+                          input: { $ifNull: ['$assistantSecretaries', []] },
+                          as: 'assistant',
+                          in: '$$assistant.userId',
+                        },
+                      },
+                      {
+                        $map: {
+                          input: { $ifNull: ['$servants', []] },
+                          as: 'servant',
+                          in: '$$servant.userId',
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+              { $unwind: '$userIds' },
+              // Stands in for the original `isValid()` guard: drops missing/null
+              // entries and anything that is not a real ObjectId.
+              { $match: { userIds: { $type: 'objectId' } } },
+              { $group: { _id: '$userIds' } },
+              { $count: 'value' },
+            ],
+          },
+        },
+      ]),
       DivineLiturgyRecurring.countDocuments({ serviceType: SERVICE_TYPES.DIVINE_LITURGY }),
       DivineLiturgyRecurring.countDocuments({ serviceType: SERVICE_TYPES.VESPERS }),
       DivineLiturgyException.countDocuments({}),
     ]);
 
-    const familyKeys = new Set();
-    users.forEach((user) => {
-      const familyKey = this._normalizeText(user?.familyName || user?.houseName, 240).toLowerCase();
-      if (familyKey) familyKeys.add(familyKey);
-    });
-
-    const servantIds = new Set();
-    const pushUserId = (value) => {
-      const id = this._toId(value);
-      if (id && mongoose.Types.ObjectId.isValid(id)) {
-        servantIds.add(id);
-      }
+    const users = {
+      total: userMetrics?.[0]?.membersTotal || 0,
+      families: userMetrics?.[0]?.familiesTotal || 0,
     };
-
-    meetingDocs.forEach((meeting) => {
-      pushUserId(meeting?.serviceSecretary?.userId);
-      (meeting?.assistantSecretaries || []).forEach((assistant) => pushUserId(assistant?.userId));
-      (meeting?.servants || []).forEach((servant) => pushUserId(servant?.userId));
-    });
-
-    const meetingsCount = meetingDocs.length;
+    const meetingsCount = meetingMetrics?.[0]?.total?.[0]?.value || 0;
+    const servantsCount = meetingMetrics?.[0]?.servants?.[0]?.value || 0;
 
     return {
-      [LANDING_SYSTEM_STAT_KEYS.FAMILIES_TOTAL]: familyKeys.size,
-      [LANDING_SYSTEM_STAT_KEYS.MEMBERS_TOTAL]: users.length,
+      [LANDING_SYSTEM_STAT_KEYS.FAMILIES_TOTAL]: users.families,
+      [LANDING_SYSTEM_STAT_KEYS.MEMBERS_TOTAL]: users.total,
       [LANDING_SYSTEM_STAT_KEYS.CHURCH_PRIESTS_TOTAL]: churchPriestsCount,
       [LANDING_SYSTEM_STAT_KEYS.MEETINGS_TOTAL]: meetingsCount,
       [LANDING_SYSTEM_STAT_KEYS.DIVINE_LITURGIES_TOTAL]:
@@ -273,7 +360,7 @@ class LandingContentService {
       [LANDING_SYSTEM_STAT_KEYS.VESPERS_TOTAL]: recurringVespersCount,
       [LANDING_SYSTEM_STAT_KEYS.SERVICES_TOTAL]:
         meetingsCount + recurringDivineLiturgiesCount + recurringVespersCount + exceptionCount,
-      [LANDING_SYSTEM_STAT_KEYS.SERVANTS_TOTAL]: servantIds.size,
+      [LANDING_SYSTEM_STAT_KEYS.SERVANTS_TOTAL]: servantsCount,
     };
   }
 

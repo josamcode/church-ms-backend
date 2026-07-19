@@ -187,6 +187,8 @@ const listMeetings = {
     sectorId: objectIdField.optional(),
     day: Joi.string().trim().max(32).optional(),
     search: Joi.string().trim().allow('', null).optional(),
+    // Lean list projection (counts only) for dashboard/list/sector views.
+    summary: Joi.boolean().truthy('1').falsy('0').default(false),
   }),
 };
 

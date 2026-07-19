@@ -59,13 +59,14 @@ const createMeeting = asyncHandler(async (req, res) => {
 });
 
 const listMeetings = asyncHandler(async (req, res) => {
-  const { cursor, limit, order, sectorId, day, search } = req.query;
+  const { cursor, limit, order, sectorId, day, search, summary } = req.query;
   const { meetings, meta } = await meetingsService.listMeetings({
     cursor,
     limit: parseInt(limit, 10) || 20,
     order: order || 'desc',
     actorUserId: req.user.id,
     userPermissions: req.userPermissions || [],
+    summary: summary === true || summary === '1' || summary === 'true',
     filters: {
       sectorId,
       day,
@@ -84,6 +85,7 @@ const getMeetingById = asyncHandler(async (req, res) => {
   const meeting = await meetingsService.getMeetingById(req.params.id, {
     actorUserId: req.user.id,
     userPermissions: req.userPermissions || [],
+    overview: req.query.overview === '1' || req.query.overview === 'true',
   });
   return ApiResponse.success(res, {
     message: 'Meeting loaded successfully',

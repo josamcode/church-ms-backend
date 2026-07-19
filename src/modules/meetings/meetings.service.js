@@ -636,6 +636,24 @@ class MeetingsService {
     };
   }
 
+  /**
+   * Lightweight sector projection for LIST views. Sector lists (management,
+   * dashboard, meeting form dropdown) only display the sector identity, avatar,
+   * and official names/count — never the linked user contact details. Emitting
+   * just those fields lets `listSectors` skip populating `officials.userId`.
+   */
+  _mapSectorSummary(sector) {
+    const officials = Array.isArray(sector.officials) ? sector.officials : [];
+    return {
+      id: this._toId(sector._id),
+      name: sector.name,
+      avatar: sector.avatar || null,
+      officials: officials.map((official) => ({ name: official.name })),
+      officialsCount: officials.length,
+      updatedAt: sector.updatedAt,
+    };
+  }
+
   _mapMeeting(meeting) {
     const sector = meeting.sectorId && typeof meeting.sectorId === 'object'
       ? {
@@ -916,6 +934,65 @@ class MeetingsService {
     };
   }
 
+  /**
+   * Project a fully-mapped meeting down to the lightweight summary used by LIST
+   * and DASHBOARD views. These only need identity + collection *counts* (never
+   * the served-user / servant / committee contents). No served-user id array is
+   * emitted — the dashboard's unique served-user total is aggregated server-side
+   * into the list response `meta` (see `listMeetings`).
+   */
+  _toMeetingSummary(mapped) {
+    if (!mapped) return null;
+    return {
+      id: mapped.id,
+      name: mapped.name,
+      day: mapped.day,
+      time: mapped.time,
+      avatar: mapped.avatar || null,
+      sector: mapped.sector || null,
+      groupsCount: (mapped.groups || []).length,
+      assistantsCount: (mapped.assistantSecretaries || []).length,
+      servantsCount: (mapped.servants || []).length,
+      committeesCount: (mapped.committees || []).length,
+      activitiesCount: (mapped.activities || []).length,
+      servedUsersCount: (mapped.servedUsers || []).length,
+      createdAt: mapped.createdAt,
+      updatedAt: mapped.updatedAt,
+      viewerContext: mapped.viewerContext,
+    };
+  }
+
+  /**
+   * Project a fully-mapped meeting down to the OVERVIEW shape used by the meeting
+   * details page. Leadership and group members keep their contact details (they
+   * are displayed), but the top-level served-user list, per-servant served-user
+   * lists, and committee members are collapsed to counts because the page only
+   * renders their sizes.
+   */
+  _toMeetingOverview(mapped) {
+    if (!mapped) return null;
+    return {
+      ...mapped,
+      servedUsers: undefined,
+      servedUsersCount: (mapped.servedUsers || []).length,
+      servants: (mapped.servants || []).map((servant) => ({
+        id: servant.id,
+        name: servant.name,
+        responsibility: servant.responsibility,
+        groupsManaged: servant.groupsManaged,
+        notes: servant.notes,
+        servedUsersCount: (servant.servedUsers || []).length,
+      })),
+      committees: (mapped.committees || []).map((committee) => ({
+        id: committee.id,
+        name: committee.name,
+        notes: committee.notes,
+        memberNames: committee.memberNames,
+        membersCount: (committee.members || []).length,
+      })),
+    };
+  }
+
   _extractLinkedUserIdsFromMeeting(meeting) {
     if (!meeting) return [];
 
@@ -1189,14 +1266,16 @@ class MeetingsService {
     }
 
     const sortDirection = order === 'desc' ? -1 : 1;
+    // Lean list: sector lists only show identity/avatar/official names + counts,
+    // so we skip populating `officials.userId` (contact details) entirely.
     const sectors = await Sector.find(query)
       .sort({ createdAt: sortDirection, _id: sortDirection })
       .limit(limit)
-      .populate('officials.userId', 'fullName phonePrimary')
+      .select('name avatar officials updatedAt createdAt')
       .lean();
 
     return {
-      sectors: sectors.map((sector) => this._mapSector(sector)),
+      sectors: sectors.map((sector) => this._mapSectorSummary(sector)),
       meta: buildPaginationMeta(sectors, limit, 'createdAt'),
     };
   }
@@ -1332,6 +1411,134 @@ class MeetingsService {
     return this.getMeetingById(meeting._id);
   }
 
+  /**
+   * FAST PATH for `listMeetings({ summary: true })` when the actor sees every
+   * meeting in full (no per-document scoping).
+   *
+   * Why this exists: the summary shape is nothing but identity + collection
+   * *counts*, yet fetching whole documents to compute those counts in Node moved
+   * ~446 KB over the wire for 17 meetings. `servants` (69%), `groupAssignments`
+   * (14%) and `servedUserIds` (13%) are raw ObjectId arrays that the summary
+   * never reads — it only needs their `.length`. Measured against Atlas the
+   * transfer, not the query, was the cost (server `executionTimeMillis` was 0
+   * while the driver spent ~4.9s); throughput is the binding constraint, so the
+   * fix is to count inside MongoDB and ship integers.
+   *
+   * SAFETY — this must stay equivalent to the generic path, which maps each
+   * document through `_resolveMeetingAccess` + `_mapMeetingByAccess`:
+   *   - It runs ONLY when access resolves to `full` for every document (viewer
+   *     has a full-view permission, or there is no actor at all). In that branch
+   *     `_resolveMeetingAccess` short-circuits to `allowed: true` before reading
+   *     any document field, so no meeting can be filtered out and the counts are
+   *     taken straight off the raw arrays.
+   *   - `servant` / `member` viewers are deliberately EXCLUDED: their mappers
+   *     ({@link _mapMeetingForServant}, {@link _mapMeetingForMember}) filter
+   *     `servants`/`groups` and blank `servedUsers`, so a raw `$size` would
+   *     over-count and leak collection sizes. Those viewers keep the generic
+   *     path, and `_buildOwnMeetingsFilter` already narrows them to few docs.
+   *   - `viewerContext` is constant here: both `canManage*` flags are defined as
+   *     `allowed && accessLevel === 'full'`, and neither reads `servantEntry`.
+   *
+   * `_mapMeeting` maps these arrays 1:1 (`.map`, never `.filter`), so `$size`
+   * equals the mapped `.length` exactly. Covered by tests that diff this output
+   * against the original mapper.
+   */
+  async _listMeetingsSummaryAggregate({ query, sortDirection, limit }) {
+    const [result] = await Meeting.aggregate([
+      { $match: query },
+      { $sort: { createdAt: sortDirection, _id: sortDirection } },
+      { $limit: limit },
+      {
+        $facet: {
+          // The page itself: identity fields + counts, never the id arrays.
+          rows: [
+            {
+              $project: {
+                name: 1,
+                day: 1,
+                time: 1,
+                avatar: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                sectorId: 1,
+                groupsCount: { $size: { $ifNull: ['$groups', []] } },
+                assistantsCount: { $size: { $ifNull: ['$assistantSecretaries', []] } },
+                servantsCount: { $size: { $ifNull: ['$servants', []] } },
+                committeesCount: { $size: { $ifNull: ['$committees', []] } },
+                activitiesCount: { $size: { $ifNull: ['$activities', []] } },
+                servedUsersCount: { $size: { $ifNull: ['$servedUserIds', []] } },
+              },
+            },
+            {
+              $lookup: {
+                from: 'sectors',
+                localField: 'sectorId',
+                foreignField: '_id',
+                as: 'sectorDoc',
+              },
+            },
+          ],
+          // Distinct served users across the page. Mirrors the Node original,
+          // which skipped falsy ids before adding them to the Set.
+          servedUsersUnique: [
+            { $project: { servedUserIds: { $ifNull: ['$servedUserIds', []] } } },
+            { $unwind: '$servedUserIds' },
+            { $match: { servedUserIds: { $ne: null } } },
+            { $group: { _id: null, ids: { $addToSet: '$servedUserIds' } } },
+            { $project: { _id: 0, count: { $size: '$ids' } } },
+          ],
+        },
+      },
+    ]);
+
+    const rows = result?.rows || [];
+    const meetings = rows.map((row) => {
+      // Match `_mapMeeting`'s sector shape: a populated sector keeps its fields,
+      // a dangling reference becomes null (mongoose `populate` nulls those too).
+      const sectorDoc = (row.sectorDoc || [])[0] || null;
+      const sector = sectorDoc
+        ? {
+            id: this._toId(sectorDoc._id),
+            name: sectorDoc.name,
+            avatar: sectorDoc.avatar || null,
+          }
+        : null;
+
+      return {
+        id: this._toId(row._id),
+        name: row.name,
+        day: row.day,
+        time: row.time,
+        avatar: row.avatar || null,
+        sector,
+        groupsCount: row.groupsCount,
+        assistantsCount: row.assistantsCount,
+        servantsCount: row.servantsCount,
+        committeesCount: row.committeesCount,
+        activitiesCount: row.activitiesCount,
+        servedUsersCount: row.servedUsersCount,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        viewerContext: {
+          accessLevel: 'full',
+          canViewAllDetails: true,
+          canViewAllServedUsers: true,
+          canViewLeadership: true,
+          canViewServants: true,
+          canViewCommittees: true,
+          canViewActivities: true,
+          canManageReminderSettings: true,
+          canManageDocumentationSettings: true,
+        },
+      };
+    });
+
+    return {
+      meetings,
+      servedUsersUnique: result?.servedUsersUnique?.[0]?.count || 0,
+    };
+  }
+
   async listMeetings({
     cursor,
     limit = 20,
@@ -1339,6 +1546,7 @@ class MeetingsService {
     filters = {},
     actorUserId = null,
     userPermissions = [],
+    summary = false,
   }) {
     const query = {
       isDeleted: { $ne: true },
@@ -1378,20 +1586,55 @@ class MeetingsService {
 
     const sortDirection = order === 'desc' ? -1 : 1;
 
-    const meetings = await Meeting.find(query)
+    // Summary + unscoped viewer => count inside MongoDB instead of shipping the
+    // served-user / servant id arrays to Node. See `_listMeetingsSummaryAggregate`
+    // for why scoped viewers must NOT take this path.
+    if (summary && (!actorUserId || hasFullViewPermission)) {
+      const { meetings: summaryMeetings, servedUsersUnique } =
+        await this._listMeetingsSummaryAggregate({ query, sortDirection, limit });
+
+      const meta = buildPaginationMeta(summaryMeetings, limit, 'createdAt');
+      meta.servedUsersUnique = servedUsersUnique;
+
+      return { meetings: summaryMeetings, meta };
+    }
+
+    // Summary mode (list + dashboard) needs only counts, so we skip the heavy
+    // served-user / servant / committee-member populates and keep just the
+    // sector. Access resolution + scoping operate on raw ids, so they still work
+    // without the populated user documents.
+    let dbQuery = Meeting.find(query)
       .sort({ createdAt: sortDirection, _id: sortDirection })
       .limit(limit)
-      .populate('sectorId', 'name avatar')
-      .populate('serviceSecretary.userId', 'fullName phonePrimary')
-      .populate('assistantSecretaries.userId', 'fullName phonePrimary')
-      .populate('servants.userId', 'fullName phonePrimary')
-      .populate('servants.servedUserIds', 'fullName phonePrimary')
-      .populate('servants.groupAssignments.servedUserIds', 'fullName phonePrimary')
-      .populate('servedUserIds', 'fullName phonePrimary')
-      .populate('groupAssignments.servedUserIds', 'fullName phonePrimary')
-      .populate('committees.memberUserIds', 'fullName phonePrimary')
-      .lean();
+      // Never load the unbounded attendance/notes/documentation history — these
+      // arrays grow with every check-in, so they are excluded to bound the worst
+      // case. The list/mapping never reads them (dedicated endpoints fetch them
+      // separately). NOTE: on current data these fields are nearly empty and this
+      // exclusion saves <1% of the payload — the bulk lives in the servant /
+      // served-user id arrays below, which scoped viewers genuinely need. Summary
+      // requests from unscoped viewers skip this query entirely; see
+      // `_listMeetingsSummaryAggregate`.
+      .select('-attendanceRecords -attendanceAuditLog -memberNotes -documentationSettings')
+      .populate('sectorId', 'name avatar');
 
+    if (!summary) {
+      dbQuery = dbQuery
+        .populate('serviceSecretary.userId', 'fullName phonePrimary')
+        .populate('assistantSecretaries.userId', 'fullName phonePrimary')
+        .populate('servants.userId', 'fullName phonePrimary')
+        .populate('servants.servedUserIds', 'fullName phonePrimary')
+        .populate('servants.groupAssignments.servedUserIds', 'fullName phonePrimary')
+        .populate('servedUserIds', 'fullName phonePrimary')
+        .populate('groupAssignments.servedUserIds', 'fullName phonePrimary')
+        .populate('committees.memberUserIds', 'fullName phonePrimary');
+    }
+
+    const meetings = await dbQuery.lean();
+
+    // In summary mode we still need the distinct served-user total for the
+    // dashboard, but we do NOT ship per-meeting id arrays. Aggregate the unique
+    // ids here (respecting access scoping) and expose only the size via `meta`.
+    const uniqueServedUserIds = summary ? new Set() : null;
     const mappedMeetings = meetings
       .map((meeting) => {
         const accessContext = this._resolveMeetingAccess({
@@ -1400,28 +1643,51 @@ class MeetingsService {
           userPermissions,
         });
         if (!accessContext.allowed) return null;
-        return this._mapMeetingByAccess(meeting, accessContext);
+        const mapped = this._mapMeetingByAccess(meeting, accessContext);
+        if (!summary) return mapped;
+        (mapped.servedUsers || []).forEach((user) => {
+          if (user?.id) uniqueServedUserIds.add(String(user.id));
+        });
+        return this._toMeetingSummary(mapped);
       })
       .filter(Boolean);
 
+    const meta = buildPaginationMeta(mappedMeetings, limit, 'createdAt');
+    if (summary) {
+      meta.servedUsersUnique = uniqueServedUserIds.size;
+    }
+
     return {
       meetings: mappedMeetings,
-      meta: buildPaginationMeta(mappedMeetings, limit, 'createdAt'),
+      meta,
     };
   }
 
-  async getMeetingById(id, { actorUserId = null, userPermissions = [] } = {}) {
-    const meeting = await Meeting.findOne({ _id: this._toObjectId(id), isDeleted: { $ne: true } })
+  async getMeetingById(id, { actorUserId = null, userPermissions = [], overview = false } = {}) {
+    // Overview mode (meeting details page) keeps leadership + group members —
+    // whose contact details are displayed — but skips the served-user, servant
+    // served-user, and committee-member populates that the page only shows counts
+    // for. Access scoping still works: it operates on raw ids, not populated docs.
+    let dbQuery = Meeting.findOne({ _id: this._toObjectId(id), isDeleted: { $ne: true } })
+      // Exclude the unbounded attendance/notes/documentation history: the detail
+      // and edit views never read it (dedicated endpoints load it separately),
+      // and it can dominate the document size.
+      .select('-attendanceRecords -attendanceAuditLog -memberNotes -documentationSettings')
       .populate('sectorId', 'name avatar')
       .populate('serviceSecretary.userId', 'fullName phonePrimary')
       .populate('assistantSecretaries.userId', 'fullName phonePrimary')
-      .populate('servants.userId', 'fullName phonePrimary')
-      .populate('servants.servedUserIds', 'fullName phonePrimary')
-      .populate('servants.groupAssignments.servedUserIds', 'fullName phonePrimary')
-      .populate('servedUserIds', 'fullName phonePrimary')
-      .populate('groupAssignments.servedUserIds', 'fullName phonePrimary')
-      .populate('committees.memberUserIds', 'fullName phonePrimary')
-      .lean();
+      .populate('groupAssignments.servedUserIds', 'fullName phonePrimary');
+
+    if (!overview) {
+      dbQuery = dbQuery
+        .populate('servants.userId', 'fullName phonePrimary')
+        .populate('servants.servedUserIds', 'fullName phonePrimary')
+        .populate('servants.groupAssignments.servedUserIds', 'fullName phonePrimary')
+        .populate('servedUserIds', 'fullName phonePrimary')
+        .populate('committees.memberUserIds', 'fullName phonePrimary');
+    }
+
+    const meeting = await dbQuery.lean();
 
     if (!meeting) {
       throw ApiError.notFound('Meeting was not found', 'RESOURCE_NOT_FOUND');
@@ -1436,7 +1702,8 @@ class MeetingsService {
       throw ApiError.forbidden('You are not allowed to access this meeting', 'PERMISSION_DENIED');
     }
 
-    return this._mapMeetingByAccess(meeting, accessContext);
+    const mapped = this._mapMeetingByAccess(meeting, accessContext);
+    return overview ? this._toMeetingOverview(mapped) : mapped;
   }
 
   async listMeetingReminderSettings() {
@@ -2020,7 +2287,15 @@ class MeetingsService {
             fullName: updatedByUser?.fullName || '',
           }
         : null,
-      historyCount: Array.isArray(record?.history) ? record.history.length : 0,
+      // `history` grows a full snapshot (notes + attachments + fieldResponses) on
+      // every edit, and only its size is ever exposed. Readers that never need the
+      // snapshots leave it in MongoDB and pass `historyCount` instead; writers,
+      // which already hold the saved document in memory, fall back to `.length`.
+      historyCount: Number.isInteger(record?.historyCount)
+        ? record.historyCount
+        : Array.isArray(record?.history)
+          ? record.history.length
+          : 0,
       canManageDocumentation: true,
     };
   }
@@ -2138,10 +2413,18 @@ class MeetingsService {
       documentationDate,
       'Documentation date'
     );
-    const record = await MeetingDocumentation.findOne({
-      meetingId: this._toObjectId(meetingId, 'meetingId'),
-      documentationDate: normalizedDocumentationDate,
-    }).lean();
+    // Read path: size `history` in MongoDB and leave the snapshots there.
+    const [record] = await MeetingDocumentation.aggregate([
+      {
+        $match: {
+          meetingId: this._toObjectId(meetingId, 'meetingId'),
+          documentationDate: normalizedDocumentationDate,
+        },
+      },
+      { $limit: 1 },
+      { $addFields: { historyCount: { $size: { $ifNull: ['$history', []] } } } },
+      { $project: { history: 0 } },
+    ]);
 
     if (!record) {
       return {
@@ -2965,6 +3248,16 @@ class MeetingsService {
     })
       .sort({ updatedAt: -1, _id: -1 })
       .limit(limit)
+      // Project down to the servant fields this actually reads. Without it every
+      // matched meeting arrives whole — attendance history, member notes and each
+      // servant's `servedUserIds` / `groupAssignments` — none of which is used
+      // below. Subfield projection preserves array order, so the filter and the
+      // `matchingServants` mapping are unaffected.
+      .select(
+        'name day time updatedAt sectorId'
+        + ' servants.userId servants.normalizedName servants.name'
+        + ' servants.responsibility servants.groupsManaged servants.notes'
+      )
       .populate('sectorId', 'name')
       .lean();
 
