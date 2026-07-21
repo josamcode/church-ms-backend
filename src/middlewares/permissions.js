@@ -3,6 +3,7 @@ const redisClient = require('../config/redis');
 const { CACHE_KEYS, CACHE_TTL } = require('../constants/cacheKeys');
 const { getEffectivePermissions } = require('../constants/permissions');
 const { ACCOUNT_STATUSES } = require('../constants/accountStatuses');
+const auditService = require('../modules/audit/audit.service');
 
 const getUserEffectivePermissions = async (userId, role, extraPermissions = [], deniedPermissions = []) => {
   try {
@@ -88,6 +89,12 @@ const authorizePermissions = (...requiredPermissions) => {
 
       const hasPermission = requiredPermissions.every((perm) => effective.includes(perm));
       if (!hasPermission) {
+        // Awaited so the denial is durably recorded before the 403 is returned;
+        // `record()` never throws, so this cannot mask the authorization error.
+        await auditService.recordPermissionDenied(req, {
+          requiredPermissions,
+          mode: 'all',
+        });
         throw ApiError.forbidden(
           'ليس لديك صلاحية لتنفيذ هذا الإجراء.',
           'PERMISSION_DENIED'
@@ -108,6 +115,10 @@ const authorizeAnyPermissions = (...requiredPermissions) => {
 
       const hasPermission = requiredPermissions.some((perm) => effective.includes(perm));
       if (!hasPermission) {
+        await auditService.recordPermissionDenied(req, {
+          requiredPermissions,
+          mode: 'any',
+        });
         throw ApiError.forbidden(
           'ليس لديك صلاحية لتنفيذ هذا الإجراء.',
           'PERMISSION_DENIED'

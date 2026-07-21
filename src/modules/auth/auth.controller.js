@@ -2,6 +2,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const authService = require('./auth.service');
 const ApiResponse = require('../../utils/apiResponse');
 const userService = require('../users/user.service');
+const auditService = require('../audit/audit.service');
 
 const register = asyncHandler(async (req, res) => {
   const result = await authService.register(req.body);
@@ -40,7 +41,24 @@ const getRegistrationOptions = asyncHandler(async (_req, res) => {
 });
 
 const login = asyncHandler(async (req, res) => {
-  const result = await authService.login(req.body);
+  // Audited at the controller because the service layer is deliberately
+  // request-free: `req.ip` / `req.requestId` / user-agent exist only here.
+  let result;
+  try {
+    result = await authService.login(req.body);
+  } catch (error) {
+    await auditService.recordLoginFailure(req, {
+      identifier: req.body?.identifier,
+      reason: error.errorCode || error.message,
+    });
+    throw error;
+  }
+
+  await auditService.recordLoginSuccess(req, {
+    userId: result.user?.id,
+    role: result.user?.role,
+  });
+
   return ApiResponse.success(res, {
     message: 'Signed in successfully',
     data: {
@@ -64,6 +82,7 @@ const refresh = asyncHandler(async (req, res) => {
 
 const logout = asyncHandler(async (req, res) => {
   await authService.logout(req.user.id, req.user.jti, req.body.refreshToken);
+  await auditService.recordLogout(req);
   return ApiResponse.success(res, {
     message: 'Signed out successfully',
   });
@@ -91,6 +110,7 @@ const changePassword = asyncHandler(async (req, res) => {
     req.body.currentPassword,
     req.body.newPassword
   );
+  await auditService.recordPasswordChanged(req);
   return ApiResponse.success(res, {
     message: 'Password changed successfully',
   });
