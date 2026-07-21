@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
+const { buildSafeRegexFilter } = require('../../utils/escapeRegex');
 const { buildPaginationMeta } = require('../../utils/pagination');
 const logger = require('../../utils/logger');
 const { getEffectivePermissions } = require('../../constants/permissions');
@@ -390,11 +391,12 @@ class NotificationsService {
       };
     }
 
-    if (filters.q) {
+    const searchFilter = buildSafeRegexFilter(filters.q);
+    if (searchFilter) {
       andConditions.push({
         $or: [
-          { name: { $regex: filters.q, $options: 'i' } },
-          { summary: { $regex: filters.q, $options: 'i' } },
+          { name: searchFilter },
+          { summary: searchFilter },
         ],
       });
     }

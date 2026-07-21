@@ -5,6 +5,7 @@ const DivineLiturgyRecurring = require('../divineLiturgies/divineLiturgyRecurrin
 const DivineLiturgyException = require('../divineLiturgies/divineLiturgyException.model');
 const RelationRole = require('./relationRole.model');
 const ApiError = require('../../utils/ApiError');
+const { escapeRegex } = require('../../utils/escapeRegex');
 const redisClient = require('../../config/redis');
 const { CACHE_KEYS, CACHE_TTL } = require('../../constants/cacheKeys');
 const { filterAssignablePermissions } = require('../../constants/permissions');
@@ -16,6 +17,7 @@ const logger = require('../../utils/logger');
 const { validateImageUpload } = require('../../utils/fileUploads');
 const storageService = require('../../services/storage/storage.service');
 const { disconnectUserSockets } = require('../chats/chat.realtime');
+const auditService = require('../audit/audit.service');
 const importedUserService = require('./importedUser.service');
 
 const LIST_USER_SELECT = [
@@ -125,10 +127,6 @@ const ARABIC_TITLE_WORDS = new Set([
   'الاب',
   'اب',
 ]);
-
-function escapeRegex(value = '') {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 function compactString(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -1385,6 +1383,16 @@ class UserService {
     });
 
     await user.save();
+
+    // Central audit trail for privilege changes. `user.changeLog` above is
+    // per-document and only visible to someone already reading that user;
+    // this records role and permission-override changes in one queryable place.
+    // No-ops when the diff contains no security-relevant field.
+    await auditService.recordPrivilegeChange({
+      actorUserId: updatedByUserId,
+      targetUserId: userId,
+      changes,
+    });
 
     // Clear caches
     await this._clearUserCache(userId);

@@ -35,6 +35,10 @@ const listSessions = asyncHandler(async (req, res) => {
     limit: parseInt(limit, 10) || 20,
     order: order || 'desc',
     viewerUserId: req.user.id,
+    // `req.userPermissions` is set by the authorization middleware — the same
+    // backend-authoritative source it uses itself, not a recomputed copy.
+    viewerPermissions: req.userPermissions,
+    viewerRole: req.user.role,
     filters: {
       attendeeUserId,
       createdByUserId,
@@ -89,6 +93,7 @@ const getAlerts = asyncHandler(async (req, res) => {
     fullName: req.query.fullName,
     page: parseInt(req.query.page, 10) || 1,
     limit: parseInt(req.query.limit, 10) || 100,
+    viewerPermissions: req.userPermissions,
   });
   return ApiResponse.success(res, {
     message: 'Confession alerts loaded successfully',

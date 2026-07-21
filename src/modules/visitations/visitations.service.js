@@ -1,7 +1,9 @@
 const mongoose = require('mongoose');
 const User = require('../users/user.model');
 const ApiError = require('../../utils/ApiError');
+const { buildSafeRegexFilter } = require('../../utils/escapeRegex');
 const { buildPaginationMeta } = require('../../utils/pagination');
+const { ROLES } = require('../../constants/roles');
 const PastoralVisitation = require('./pastoralVisitation.model');
 
 class VisitationsService {
@@ -12,23 +14,49 @@ class VisitationsService {
     return new mongoose.Types.ObjectId(id);
   }
 
-  _mapVisitation(visitation) {
+  /**
+   * May this viewer read the pastoral note body of this visitation?
+   *
+   * Pastoral notes are the sensitive payload of a visitation record. Before
+   * this change every `PASTORAL_VISITATIONS_VIEW` holder — which is every
+   * ADMIN by default — could read every note ever written. Access is now
+   * limited to the person who wrote it and to SUPER_ADMIN, so the note stays
+   * with the pastoral relationship that produced it. Everything else about
+   * the visit (house, date, duration, who recorded it) remains visible, so
+   * listing, filtering, and analytics are unaffected.
+   */
+  _canViewNotes(visitation, viewer = {}) {
+    if (!viewer || !viewer.viewerUserId) return false;
+    if (viewer.viewerRole === ROLES.SUPER_ADMIN) return true;
+
+    const recorder = visitation.recordedBy || null;
+    const recorderId = recorder && typeof recorder === 'object' ? recorder._id : recorder;
+    return String(recorderId || '') === String(viewer.viewerUserId);
+  }
+
+  _mapVisitation(visitation, viewer = {}) {
     const recorder = visitation.recordedBy || null;
     const recorderIsPopulated = recorder && typeof recorder === 'object' && recorder.fullName;
     const recorderId = recorderIsPopulated ? recorder._id : visitation.recordedBy;
+
+    const canViewNotes = this._canViewNotes(visitation, viewer);
 
     return {
       id: visitation._id,
       houseName: visitation.houseName,
       durationMinutes: visitation.durationMinutes ?? 10,
       visitedAt: visitation.visitedAt,
-      notes: visitation.notes || '',
+      notes: canViewNotes ? visitation.notes || '' : '',
+      // Lets the UI show "restricted" rather than an ambiguous empty note.
+      notesRestricted: !canViewNotes,
       recordedAt: visitation.createdAt,
       recordedBy: recorderId
         ? {
             id: recorderId,
             fullName: recorderIsPopulated ? recorder.fullName : null,
-            phonePrimary: recorderIsPopulated ? recorder.phonePrimary || null : null,
+            // The recorder's personal phone number was previously returned to
+            // every viewer. It serves no purpose in a visitation record and is
+            // staff personal data, so it is no longer selected or exposed.
           }
         : null,
       createdAt: visitation.createdAt,
@@ -56,17 +84,18 @@ class VisitationsService {
     });
 
     const populated = await PastoralVisitation.findById(visitation._id)
-      .populate('recordedBy', 'fullName phonePrimary')
+      .populate('recordedBy', 'fullName')
       .lean();
 
-    return this._mapVisitation(populated);
+    return this._mapVisitation(populated, { viewerUserId: actorUserId });
   }
 
-  async listVisitations({ cursor, limit = 20, order = 'desc', filters = {} }) {
+  async listVisitations({ cursor, limit = 20, order = 'desc', filters = {}, viewer = {} }) {
     const query = {};
 
-    if (filters.houseName) {
-      query.houseName = { $regex: filters.houseName.trim(), $options: 'i' };
+    const houseNameFilter = buildSafeRegexFilter(filters.houseName);
+    if (houseNameFilter) {
+      query.houseName = houseNameFilter;
     }
     if (filters.recordedByUserId) {
       query.recordedBy = this._toObjectId(filters.recordedByUserId, 'recordedByUserId');
@@ -100,27 +129,27 @@ class VisitationsService {
     const visitations = await PastoralVisitation.find(query)
       .sort({ visitedAt: sortDirection, _id: sortDirection })
       .limit(limit)
-      .populate('recordedBy', 'fullName phonePrimary')
+      .populate('recordedBy', 'fullName')
       .lean();
 
     const meta = buildPaginationMeta(visitations, limit, 'visitedAt');
 
     return {
-      visitations: visitations.map((visitation) => this._mapVisitation(visitation)),
+      visitations: visitations.map((visitation) => this._mapVisitation(visitation, viewer)),
       meta,
     };
   }
 
-  async getVisitationById(id) {
+  async getVisitationById(id, viewer = {}) {
     const visitation = await PastoralVisitation.findById(this._toObjectId(id))
-      .populate('recordedBy', 'fullName phonePrimary')
+      .populate('recordedBy', 'fullName')
       .lean();
 
     if (!visitation) {
       throw ApiError.notFound('Pastoral visitation not found', 'RESOURCE_NOT_FOUND');
     }
 
-    return this._mapVisitation(visitation);
+    return this._mapVisitation(visitation, viewer);
   }
 
   async getAnalytics({ months = 6 }) {

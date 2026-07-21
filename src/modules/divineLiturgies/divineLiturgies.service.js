@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
+const { escapeRegex } = require('../../utils/escapeRegex');
 const redisClient = require('../../config/redis');
 const { CACHE_KEYS } = require('../../constants/cacheKeys');
 const { PERMISSIONS } = require('../../constants/permissions');
@@ -795,8 +796,7 @@ class DivineLiturgiesService {
   _buildUserNameSearchRegex(search) {
     const term = String(search || '').trim();
     if (!term) return null;
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(escaped, 'i');
+    return new RegExp(escapeRegex(term), 'i');
   }
 
   _mapAttendanceUser(user) {

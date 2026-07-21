@@ -5,6 +5,7 @@ const { getEducationStageGroup } = require('../../constants/education');
 const { PERMISSIONS } = require('../../constants/permissions');
 const User = require('../users/user.model');
 const ApiError = require('../../utils/ApiError');
+const { escapeRegex } = require('../../utils/escapeRegex');
 const HouseholdClassification = require('./householdClassification.model');
 const HouseholdProfile = require('./householdProfile.model');
 const {
@@ -25,10 +26,6 @@ function trimString(value) {
   if (value == null) return undefined;
   const trimmed = String(value).trim();
   return trimmed || undefined;
-}
-
-function escapeRegex(value) {
-  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function normalizeText(value) {

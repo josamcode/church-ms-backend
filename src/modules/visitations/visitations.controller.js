@@ -23,6 +23,10 @@ const listVisitations = asyncHandler(async (req, res) => {
       dateFrom,
       dateTo,
     },
+    // Identity, not permissions: note visibility is decided by who recorded
+    // the visit, and `req.user` is the same authenticated source the
+    // authorization middleware uses.
+    viewer: { viewerUserId: req.user.id, viewerRole: req.user.role },
   });
 
   return ApiResponse.success(res, {
@@ -33,7 +37,10 @@ const listVisitations = asyncHandler(async (req, res) => {
 });
 
 const getVisitationById = asyncHandler(async (req, res) => {
-  const visitation = await visitationsService.getVisitationById(req.params.id);
+  const visitation = await visitationsService.getVisitationById(req.params.id, {
+    viewerUserId: req.user.id,
+    viewerRole: req.user.role,
+  });
   return ApiResponse.success(res, {
     message: 'Pastoral visitation loaded successfully',
     data: visitation,

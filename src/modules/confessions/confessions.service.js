@@ -5,6 +5,7 @@ const ConfessionSessionType = require('./confessionSessionType.model');
 const ConfessionConfig = require('./confessionConfig.model');
 const ChurchPriest = require('../divineLiturgies/churchPriest.model');
 const ApiError = require('../../utils/ApiError');
+const { buildSafeRegexFilter } = require('../../utils/escapeRegex');
 const logger = require('../../utils/logger');
 const { PERMISSIONS } = require('../../constants/permissions');
 const { ROLES } = require('../../constants/roles');
@@ -29,10 +30,57 @@ class ConfessionsService {
     return new mongoose.Types.ObjectId(id);
   }
 
-  _mapSession(session) {
+  /**
+   * May this viewer read the note body of this confession session?
+   *
+   * `CONFESSIONS_VIEW` is granted to every ADMIN by default, and before this
+   * change it returned every session's notes for every member. Confession
+   * notes are the most sensitive text in the system, so holding the module
+   * permission is no longer sufficient — the viewer must stand in a pastoral
+   * relationship to the record:
+   *
+   *   - the person who recorded the session;
+   *   - the attendee themself;
+   *   - the attendee's assigned confession father;
+   *   - SUPER_ADMIN.
+   *
+   * Session metadata (attendee, type, dates) stays visible to
+   * `CONFESSIONS_VIEW`, so lists, filters, and analytics are unaffected.
+   */
+  _canViewSessionNotes(session, viewer = {}) {
+    const viewerUserId = viewer.viewerUserId;
+    if (!viewerUserId) return false;
+    if (viewer.viewerRole === ROLES.SUPER_ADMIN) return true;
+
+    const sameId = (value) => {
+      if (!value) return false;
+      const id = typeof value === 'object' && value._id ? value._id : value;
+      return String(id) === String(viewerUserId);
+    };
+
+    if (sameId(session.createdBy)) return true;
+    if (sameId(session.attendeeUserId)) return true;
+
+    const attendee = session.attendeeUserId;
+    if (attendee && typeof attendee === 'object' && sameId(attendee.confessionFatherUserId)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  _mapSession(session, viewer = {}) {
     const attendee = session.attendeeUserId || null;
     const attendeeIsPopulated = attendee && typeof attendee === 'object' && attendee.fullName;
     const attendeeId = attendeeIsPopulated ? attendee._id : session.attendeeUserId;
+
+    const canViewNotes = this._canViewSessionNotes(session, viewer);
+    // The attendee's phone is contact data, not session data. It is kept for
+    // viewers who may already act on the attendee's behalf (those who can read
+    // the notes, or who hold the assignment permission) and dropped otherwise.
+    const canViewAttendeeContact =
+      canViewNotes
+      || this._hasPermission(viewer.viewerPermissions, PERMISSIONS.CONFESSIONS_ASSIGN_USER);
 
     const sessionType = session.sessionTypeId || null;
     const typeIsPopulated = sessionType && typeof sessionType === 'object' && sessionType.name;
@@ -47,7 +95,8 @@ class ConfessionsService {
       attendee: {
         id: attendeeId || null,
         fullName: attendeeIsPopulated ? attendee.fullName : session.attendeeNameSnapshot,
-        phonePrimary: attendeeIsPopulated ? attendee.phonePrimary || null : null,
+        phonePrimary:
+          canViewAttendeeContact && attendeeIsPopulated ? attendee.phonePrimary || null : null,
         avatar: attendeeIsPopulated ? attendee.avatar || null : null,
         role: attendeeIsPopulated ? attendee.role || null : null,
       },
@@ -57,7 +106,9 @@ class ConfessionsService {
       },
       scheduledAt: session.scheduledAt,
       nextSessionAt: session.nextSessionAt || null,
-      notes: session.notes || '',
+      notes: canViewNotes ? session.notes || '' : '',
+      // Distinguishes "no note was written" from "you may not read this note".
+      notesRestricted: !canViewNotes,
       createdBy: creatorId || null,
       createdByUser: creatorId
         ? {
@@ -186,8 +237,9 @@ class ConfessionsService {
     const skip = (safePage - 1) * safeLimit;
 
     const userQuery = { isDeleted: { $ne: true } };
-    if (fullName) {
-      userQuery.fullName = { $regex: fullName, $options: 'i' };
+    const alertNameFilter = buildSafeRegexFilter(fullName);
+    if (alertNameFilter) {
+      userQuery.fullName = alertNameFilter;
     }
 
     if (hasPagination) {
@@ -458,15 +510,19 @@ class ConfessionsService {
     });
 
     const populated = await ConfessionSession.findById(session._id)
-      .populate('attendeeUserId', 'fullName phonePrimary avatar role')
+      .populate('attendeeUserId', 'fullName phonePrimary avatar role confessionFatherUserId')
       .populate('sessionTypeId', 'name')
       .populate('createdBy', 'fullName')
       .lean();
 
-    return this._mapSession(populated);
+    // The recorder always sees the note they just wrote.
+    return this._mapSession(populated, {
+      viewerUserId: actorUserId,
+      viewerPermissions: actorPermissions,
+    });
   }
 
-  async listSessions({ cursor, limit = 20, order = 'desc', filters = {}, viewerUserId }) {
+  async listSessions({ cursor, limit = 20, order = 'desc', filters = {}, viewerUserId, viewerPermissions = [], viewerRole = null }) {
     const conditions = [];
 
     if (filters.attendeeUserId) {
@@ -538,7 +594,9 @@ class ConfessionsService {
     const sessions = await ConfessionSession.find(query)
       .sort({ scheduledAt: sortDirection, _id: sortDirection })
       .limit(limit)
-      .populate('attendeeUserId', 'fullName phonePrimary avatar role')
+      // `confessionFatherUserId` is needed so `_canViewSessionNotes` can grant
+      // the attendee's own confession father access to the note.
+      .populate('attendeeUserId', 'fullName phonePrimary avatar role confessionFatherUserId')
       .populate('sessionTypeId', 'name')
       .populate('createdBy', 'fullName')
       .lean();
@@ -546,7 +604,7 @@ class ConfessionsService {
     const meta = buildPaginationMeta(sessions, limit, 'scheduledAt');
 
     return {
-      sessions: sessions.map((session) => this._mapSession(session)),
+      sessions: sessions.map((session) => this._mapSession(session, { viewerUserId, viewerPermissions, viewerRole })),
       meta,
     };
   }
@@ -554,11 +612,13 @@ class ConfessionsService {
   async searchUsers({ fullName, phonePrimary, limit = 15 }) {
     const query = {};
     const orConditions = [];
-    if (fullName) {
-      orConditions.push({ fullName: { $regex: fullName, $options: 'i' } });
+    const fullNameFilter = buildSafeRegexFilter(fullName);
+    if (fullNameFilter) {
+      orConditions.push({ fullName: fullNameFilter });
     }
-    if (phonePrimary) {
-      orConditions.push({ phonePrimary: { $regex: phonePrimary, $options: 'i' } });
+    const phoneFilter = buildSafeRegexFilter(phonePrimary);
+    if (phoneFilter) {
+      orConditions.push({ phonePrimary: phoneFilter });
     }
     if (orConditions.length === 1) {
       Object.assign(query, orConditions[0]);
@@ -603,16 +663,27 @@ class ConfessionsService {
     };
   }
 
-  async getAlerts({ thresholdDays, fullName, page, limit }) {
+  async getAlerts({ thresholdDays, fullName, page, limit, viewerPermissions = [] }) {
     const config = await getOrCreateConfessionConfig();
     const effectiveThreshold = thresholdDays || config.alertThresholdDays;
 
-    const { alerts, cutoffDate, totalCount, meta } = await this._buildAlerts({
+    const { alerts: rawAlerts, cutoffDate, totalCount, meta } = await this._buildAlerts({
       thresholdDays: effectiveThreshold,
       fullName,
       page,
       limit,
     });
+
+    // The alerts list spans the entire member directory. Attaching everyone's
+    // phone number to it turns an overdue-confession report into a bulk contact
+    // export, so the number is kept only for viewers who may act on it.
+    const canViewContact = this._hasPermission(
+      viewerPermissions,
+      PERMISSIONS.CONFESSIONS_ASSIGN_USER
+    );
+    const alerts = canViewContact
+      ? rawAlerts
+      : rawAlerts.map((alert) => ({ ...alert, phonePrimary: null }));
 
     return {
       thresholdDays: effectiveThreshold,

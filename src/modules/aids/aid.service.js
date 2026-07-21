@@ -2,6 +2,7 @@ const Aid = require('./aid.model');
 const aidReminderService = require('./aidReminder.service');
 const Notification = require('../notifications/notification.model');
 const ApiError = require('../../utils/ApiError');
+const { buildSafeRegexFilter } = require('../../utils/escapeRegex');
 const {
   getAidOccurrenceFrequency,
   normalizeAidOccurrence,
@@ -81,8 +82,9 @@ class AidService {
 
     // Optional filtering match stage
     const matchFilters = {};
-    if (search) {
-      matchFilters.description = { $regex: search, $options: 'i' };
+    const descriptionFilter = buildSafeRegexFilter(search);
+    if (descriptionFilter) {
+      matchFilters.description = descriptionFilter;
     }
     if (category) {
       matchFilters.category = category;

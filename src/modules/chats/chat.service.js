@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
+const { buildSafeRegexFilter } = require('../../utils/escapeRegex');
 const { buildPaginationMeta } = require('../../utils/pagination');
 const { PERMISSIONS } = require('../../constants/permissions');
 const { AGE_GROUPS_ARRAY } = require('../../constants/ageGroups');
@@ -657,12 +658,12 @@ class ChatsService {
           _id: { $ne: this._toObjectId(actorUserId, 'actorUserId') },
         };
 
-    const trimmedQuery = String(q || '').trim();
-    if (trimmedQuery) {
+    const searchFilter = buildSafeRegexFilter(q);
+    if (searchFilter) {
       query.$or = [
-        { fullName: { $regex: trimmedQuery, $options: 'i' } },
-        { phonePrimary: { $regex: trimmedQuery, $options: 'i' } },
-        { email: { $regex: trimmedQuery, $options: 'i' } },
+        { fullName: searchFilter },
+        { phonePrimary: searchFilter },
+        { email: searchFilter },
       ];
     }
 

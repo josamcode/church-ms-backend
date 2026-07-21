@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const ApiError = require('../../utils/ApiError');
+const { buildSafeRegexFilter } = require('../../utils/escapeRegex');
 const { buildPaginationMeta } = require('../../utils/pagination');
 const { PERMISSIONS } = require('../../constants/permissions');
 const redisClient = require('../../config/redis');
@@ -1252,8 +1253,9 @@ class MeetingsService {
       isDeleted: { $ne: true },
     };
 
-    if (search) {
-      query.name = { $regex: this._normalizeText(search), $options: 'i' };
+    const sectorNameFilter = buildSafeRegexFilter(search);
+    if (sectorNameFilter) {
+      query.name = sectorNameFilter;
     }
 
     if (cursor) {
@@ -1567,12 +1569,17 @@ class MeetingsService {
       query.sectorId = this._toObjectId(filters.sectorId, 'sectorId');
     }
 
-    if (filters.day) {
-      query.day = { $regex: `^${this._normalizeText(filters.day)}$`, $options: 'i' };
+    // `exact` anchors with ^...$. Anchoring UNESCAPED input would be worse than
+    // no anchor at all: a value containing `$|` terminates the intended exact
+    // match and ORs in an arbitrary pattern.
+    const dayFilter = buildSafeRegexFilter(filters.day, { exact: true });
+    if (dayFilter) {
+      query.day = dayFilter;
     }
 
-    if (filters.search) {
-      query.name = { $regex: this._normalizeText(filters.search), $options: 'i' };
+    const meetingNameFilter = buildSafeRegexFilter(filters.search);
+    if (meetingNameFilter) {
+      query.name = meetingNameFilter;
     }
 
     if (cursor) {
@@ -3213,8 +3220,9 @@ class MeetingsService {
 
   async listResponsibilitySuggestions({ search, limit = 30 }) {
     const query = {};
-    if (search) {
-      query.label = { $regex: this._normalizeText(search), $options: 'i' };
+    const labelFilter = buildSafeRegexFilter(search);
+    if (labelFilter) {
+      query.label = labelFilter;
     }
 
     const docs = await MeetingResponsibility.find(query)

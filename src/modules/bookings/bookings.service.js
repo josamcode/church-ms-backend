@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const config = require('../../config/env');
 const logger = require('../../utils/logger');
 const ApiError = require('../../utils/ApiError');
+const { buildSafeRegexFilter } = require('../../utils/escapeRegex');
 const BookingType = require('./bookingType.model');
 const Booking = require('./booking.model');
 const BookingSlotCounter = require('./bookingSlotCounter.model');
@@ -1273,14 +1274,15 @@ class BookingsService {
       query.status = filters.status;
     }
 
-    if (filters.q) {
+    const searchFilter = buildSafeRegexFilter(filters.q);
+    if (searchFilter) {
       andConditions.push({
         $or: [
-          { bookingTypeNameSnapshot: { $regex: filters.q, $options: 'i' } },
-          { 'requester.name': { $regex: filters.q, $options: 'i' } },
-          { 'requester.phone': { $regex: filters.q, $options: 'i' } },
-          { 'requester.email': { $regex: filters.q, $options: 'i' } },
-          { notes: { $regex: filters.q, $options: 'i' } },
+          { bookingTypeNameSnapshot: searchFilter },
+          { 'requester.name': searchFilter },
+          { 'requester.phone': searchFilter },
+          { 'requester.email': searchFilter },
+          { notes: searchFilter },
         ],
       });
     }
