@@ -404,7 +404,61 @@ are not tracked by git.
 
 ---
 
-## 7. Quick-Reference Commands
+## 7. AI Feature Controls
+
+AI is **disabled by default** (`AI_ENABLED=false`). Work through this section
+only when deliberately enabling it.
+
+### Before enabling
+
+- [ ] Confirm the central audit module is deployed and `auditLog` is receiving
+      `auth.login` and `permission.denied` events. AI events have nowhere to go
+      without it, and an unauditable AI feature must not be turned on.
+- [ ] Set `ANTHROPIC_API_KEY` (primary) and `OPENAI_API_KEY` (fallback) as
+      platform secrets. Never commit them; `scripts/scan-secrets.js` detects
+      `sk-ant-`, `sk-proj-`, `AIza`, and related patterns.
+- [ ] Leave `AI_PROVIDER_GEMINI_ENABLED=false`. Google's unpaid tier permits
+      training on prompts and human review, and the automatic paid-terms
+      carve-out does not cover this deployment's region. Enabling it also
+      requires `AI_GEMINI_BILLING_VERIFIED=true`, and the server refuses to boot
+      otherwise.
+- [ ] Confirm `DEEPSEEK_API_KEY` is **not** set. DeepSeek is a rejected provider
+      and production refuses to boot when a credential for it is present.
+- [ ] Review `AI_DAILY_SPEND_USD` and `AI_MONTHLY_SPEND_USD`. Reaching the
+      monthly ceiling stops all AI usage until the next month.
+
+### Rollout order
+
+1. `AI_ENABLED=true` with no user holding an AI permission — nothing changes for
+   anyone, but the wiring is live and observable.
+2. Grant `AI_DRAFT_CONTENT` to one SUPER_ADMIN via `extraPermissions`.
+3. Extend to three admins. Watch draft acceptance and the `aiUsage` collection.
+4. Extend further only if the stop conditions below stay clear.
+
+AI permissions are additive and belong to **no** role by default: each endpoint
+requires the AI permission *and* the matching domain permission, so AI can never
+grant access a user did not already have.
+
+### Stop conditions — any one halts the rollout immediately
+
+- [ ] Any single `ai.redaction_blocked` event in production. Treat it as a
+      security incident, not a metric: it means a caller assembled a payload the
+      design forbids.
+- [ ] Draft acceptance below 30% after two weeks.
+- [ ] Spend exceeding three times the budget.
+- [ ] Any incorrect number reaching a user through the analytics narrative.
+
+### Turning it off
+
+`AI_ENABLED=false` plus a restart disables every AI path immediately. Flags are
+read per request rather than cached at boot, so no deploy is required. The
+features are read-only and write nothing, so disabling has **zero data impact** —
+the notification form and the analytics page simply revert to their previous
+behaviour.
+
+---
+
+## 8. Quick-Reference Commands
 
 ```powershell
 # Run all backend tests
