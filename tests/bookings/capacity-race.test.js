@@ -4,6 +4,7 @@
 
 const mongoose = require('mongoose');
 const { BOOKING_STATUSES } = require('../../src/modules/bookings/booking.model');
+const { FUTURE_DATE } = require('../helpers/dates');
 
 // ── Helpers to build chainable Mongoose query mocks ──
 
@@ -226,9 +227,9 @@ describe('Booking Capacity Race — Atomic Counter', () => {
         availabilityConfig: { timezone: 'Africa/Cairo' }, dynamicFields: [] };
 
       const b1 = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
       const b2 = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
 
       mockBookingModel.findById
         .mockResolvedValueOnce(b1)
@@ -269,9 +270,9 @@ describe('Booking Capacity Race — Atomic Counter', () => {
         availabilityConfig: { timezone: 'Africa/Cairo' }, dynamicFields: [] };
 
       const b1 = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
       const b2 = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
 
       mockBookingModel.findById
         .mockResolvedValueOnce(b1)
@@ -281,7 +282,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
         _id: b1._id, bookingTypeNameSnapshot: 'Test',
         requester: { name: '', phone: '', email: '' },
         additionalFields: [], adminNotes: '', source: 'public', status: BOOKING_STATUSES.CONFIRMED,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', scheduledAt: new Date(),
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', scheduledAt: new Date(),
         createdAt: new Date(), updatedAt: new Date(),
       }));
 
@@ -304,14 +305,14 @@ describe('Booking Capacity Race — Atomic Counter', () => {
       const type = { _id: typeId, name: 'Test', isActive: true, capacity: 1 };
 
       // Pre-populate the counter at capacity
-      const key = `${typeId}||2026-07-01||10:00`;
+      const key = `${typeId}||${FUTURE_DATE}||10:00`;
       counterStore.set(key, {
         _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        slotDate: '2026-07-01', slotTime: '10:00', used: 1, capacity: 1,
+        slotDate: FUTURE_DATE, slotTime: '10:00', used: 1, capacity: 1,
       });
 
       const b = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
 
       mockBookingModel.findById.mockResolvedValue(b);
       mockBookingTypeModel.findById.mockReturnValue(chainable(type));
@@ -330,7 +331,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
   describe('capacity_released_when_confirmed_booking_is_cancelled_or_rejected', () => {
     it('should release capacity when a CONFIRMED booking is cancelled', async () => {
       const typeId = new mongoose.Types.ObjectId();
-      const slotDate = '2026-07-01', slotTime = '10:00';
+      const slotDate = FUTURE_DATE, slotTime = '10:00';
       const key = `${typeId}||${slotDate}||${slotTime}`;
       counterStore.set(key, {
         _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
@@ -357,7 +358,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
 
     it('should release capacity when a CONFIRMED booking is reverted to PENDING', async () => {
       const typeId = new mongoose.Types.ObjectId();
-      const slotDate = '2026-07-01', slotTime = '10:00';
+      const slotDate = FUTURE_DATE, slotTime = '10:00';
       const key = `${typeId}||${slotDate}||${slotTime}`;
       counterStore.set(key, {
         _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
@@ -384,14 +385,14 @@ describe('Booking Capacity Race — Atomic Counter', () => {
 
     it('should NOT release capacity when COMPLETED stays COMPLETED', async () => {
       const typeId = new mongoose.Types.ObjectId();
-      const key = `${typeId}||2026-07-01||10:00`;
+      const key = `${typeId}||${FUTURE_DATE}||10:00`;
       counterStore.set(key, {
         _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        slotDate: '2026-07-01', slotTime: '10:00', used: 1, capacity: 2,
+        slotDate: FUTURE_DATE, slotTime: '10:00', used: 1, capacity: 2,
       });
 
       const b = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', status: BOOKING_STATUSES.COMPLETED });
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', status: BOOKING_STATUSES.COMPLETED });
 
       mockBookingModel.findById.mockResolvedValue(b);
       mockBookingModel.findOne.mockReturnValue(chainable({
@@ -427,7 +428,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
       const type = { _id: typeId, name: 'Test', isActive: true, capacity: 5,
         availabilityMode: 'ALWAYS', bookingHorizonDays: 45,
         availabilityConfig: { timezone: 'Africa/Cairo' }, dynamicFields: [] };
-      const slotDate = '2026-07-01', slotTime = '10:00';
+      const slotDate = FUTURE_DATE, slotTime = '10:00';
       const key = `${typeId}||${slotDate}||${slotTime}`;
 
       const stored = new mockBookingModel({ _id: bookingId, bookingTypeId: typeId,
@@ -460,7 +461,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
     it('parallel_cancels_same_confirmed_booking_release_capacity_once', async () => {
       const typeId = new mongoose.Types.ObjectId();
       const bookingId = new mongoose.Types.ObjectId();
-      const slotDate = '2026-07-01', slotTime = '10:00';
+      const slotDate = FUTURE_DATE, slotTime = '10:00';
       const key = `${typeId}||${slotDate}||${slotTime}`;
       counterStore.set(key, {
         _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
@@ -499,7 +500,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
       const type = { _id: typeId, name: 'Test', isActive: true, capacity: 2,
         availabilityMode: 'ALWAYS', bookingHorizonDays: 45,
         availabilityConfig: { timezone: 'Africa/Cairo' }, dynamicFields: [] };
-      const slotDate = '2026-07-01', slotTime = '10:00';
+      const slotDate = FUTURE_DATE, slotTime = '10:00';
       const stored = new mockBookingModel({ _id: bookingId, bookingTypeId: typeId,
         scheduledDate: slotDate, scheduledTime: slotTime, status: BOOKING_STATUSES.CONFIRMED });
       const staleSnapshot = new mockBookingModel({ _id: bookingId, bookingTypeId: typeId,
@@ -521,14 +522,14 @@ describe('Booking Capacity Race — Atomic Counter', () => {
   describe('capacity_transfers_when_confirmed_booking_moves_slot', () => {
     it('should not change capacity when re-confirming an already CONFIRMED booking', async () => {
       const typeId = new mongoose.Types.ObjectId();
-      const key = `${typeId}||2026-07-01||10:00`;
+      const key = `${typeId}||${FUTURE_DATE}||10:00`;
       counterStore.set(key, {
         _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        slotDate: '2026-07-01', slotTime: '10:00', used: 1, capacity: 2,
+        slotDate: FUTURE_DATE, slotTime: '10:00', used: 1, capacity: 2,
       });
 
       const b = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', status: BOOKING_STATUSES.CONFIRMED });
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', status: BOOKING_STATUSES.CONFIRMED });
 
       mockBookingModel.findById.mockResolvedValue(b);
       mockBookingModel.findOne.mockReturnValue(chainable({
@@ -555,7 +556,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
       const type = { _id: typeId, name: 'Test', isActive: true, capacity: 2,
         availabilityMode: 'ALWAYS', bookingHorizonDays: 45,
         availabilityConfig: { timezone: 'Africa/Cairo' }, dynamicFields: [] };
-      const slotDate = '2026-07-01', slotTime = '10:00';
+      const slotDate = FUTURE_DATE, slotTime = '10:00';
       const key = `${typeId}||${slotDate}||${slotTime}`;
 
       const b = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
@@ -587,7 +588,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
         _id: new mongoose.Types.ObjectId(), bookingTypeNameSnapshot: 'Test',
         requester: { name: '', phone: '', email: '' },
         additionalFields: [], adminNotes: '', source: 'public', status,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', scheduledAt: new Date(),
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', scheduledAt: new Date(),
         bookingTypeId: 'aaaaaaaaaaaaaaaaaaaaaaaa',
         createdAt: new Date(), updatedAt: new Date(),
       }));
@@ -599,7 +600,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
         availabilityMode: 'ALWAYS', bookingHorizonDays: 45,
         availabilityConfig: { timezone: 'Africa/Cairo' }, dynamicFields: [] };
       const b = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', status: BOOKING_STATUSES.CANCELLED });
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', status: BOOKING_STATUSES.CANCELLED });
 
       mockBookingModel.findById.mockResolvedValue(b);
       mockBookingTypeModel.findById.mockReturnValue(chainable(type));
@@ -612,9 +613,9 @@ describe('Booking Capacity Race — Atomic Counter', () => {
 
     it('should allow PENDING → CANCELLED with no capacity effect', async () => {
       const typeId = new mongoose.Types.ObjectId();
-      const key = `${typeId}||2026-07-01||10:00`;
+      const key = `${typeId}||${FUTURE_DATE}||10:00`;
       const b = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
 
       mockBookingModel.findById.mockResolvedValue(b);
       setupGetBookingByIdResponse(BOOKING_STATUSES.CANCELLED);
@@ -628,13 +629,13 @@ describe('Booking Capacity Race — Atomic Counter', () => {
 
     it('should allow adminNotes update with no capacity effect', async () => {
       const typeId = new mongoose.Types.ObjectId();
-      const key = `${typeId}||2026-07-01||10:00`;
+      const key = `${typeId}||${FUTURE_DATE}||10:00`;
       counterStore.set(key, {
         _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        slotDate: '2026-07-01', slotTime: '10:00', used: 1, capacity: 2,
+        slotDate: FUTURE_DATE, slotTime: '10:00', used: 1, capacity: 2,
       });
       const b = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', status: BOOKING_STATUSES.CONFIRMED });
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', status: BOOKING_STATUSES.CONFIRMED });
 
       mockBookingModel.findById.mockResolvedValue(b);
       setupGetBookingByIdResponse(BOOKING_STATUSES.CONFIRMED);
@@ -649,7 +650,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
     it('should allow COMPLETED → COMPLETED with no capacity change', async () => {
       const typeId = new mongoose.Types.ObjectId();
       const b = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', status: BOOKING_STATUSES.COMPLETED });
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', status: BOOKING_STATUSES.COMPLETED });
 
       mockBookingModel.findById.mockResolvedValue(b);
       setupGetBookingByIdResponse(BOOKING_STATUSES.COMPLETED);
@@ -665,7 +666,7 @@ describe('Booking Capacity Race — Atomic Counter', () => {
         availabilityMode: 'ALWAYS', bookingHorizonDays: 45,
         availabilityConfig: { timezone: 'Africa/Cairo' }, dynamicFields: [] };
       const b = new mockBookingModel({ _id: new mongoose.Types.ObjectId(), bookingTypeId: typeId,
-        scheduledDate: '2026-07-01', scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00', status: BOOKING_STATUSES.PENDING });
 
       mockBookingModel.findById.mockResolvedValue(b);
       mockBookingTypeModel.findById.mockReturnValue(chainable(type));

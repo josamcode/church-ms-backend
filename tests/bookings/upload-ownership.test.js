@@ -9,6 +9,11 @@ const { BOOKING_STATUSES } = require('../../src/modules/bookings/booking.model')
 const mockPendingUploadStore = new Map();
 let mockUploadTokenCounter = 0;
 
+// `_assertRequestedScheduleAllowed` rejects any date outside
+// [today, today + bookingHorizonDays], so a literal date here would silently turn
+// every test in this file red once it drifted into the past.
+const { FUTURE_DATE } = require('../helpers/dates');
+
 // ── Module-scope mockChainable helper (prefixed with mock per Jest rules) ──
 function mockChainable(resolvedValue) {
   return {
@@ -255,7 +260,7 @@ describe('Public Booking Upload Ownership', () => {
         bookingsService.createPublicBooking({
           bookingTypeId: new mongoose.Types.ObjectId(),
           requesterName: 'Test User', requesterPhone: '01000000000',
-          scheduledDate: '2026-07-01', scheduledTime: '10:00',
+          scheduledDate: FUTURE_DATE, scheduledTime: '10:00',
           dynamicFields: [
             { key: 'photo', value: { url: 'https://evil.example.com/hacked.jpg' } },
           ],
@@ -273,7 +278,7 @@ describe('Public Booking Upload Ownership', () => {
         bookingsService.createPublicBooking({
           bookingTypeId: new mongoose.Types.ObjectId(),
           requesterName: 'Test User', requesterPhone: '01000000000',
-          scheduledDate: '2026-07-01', scheduledTime: '10:00',
+          scheduledDate: FUTURE_DATE, scheduledTime: '10:00',
           dynamicFields: [
             { key: 'photo', value: { storageKey: 'bookings/unknown/photo/fake-key.png' } },
           ],
@@ -295,7 +300,7 @@ describe('Public Booking Upload Ownership', () => {
 
       const payload = {
         bookingTypeId: typeId, requesterName: 'Test User', requesterPhone: '01000000000',
-        scheduledDate: '2026-07-01', scheduledTime: '10:00',
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00',
         dynamicFields: [{ key: 'photo', value: { uploadToken: upload.uploadToken } }],
       };
 
@@ -329,7 +334,7 @@ describe('Public Booking Upload Ownership', () => {
       await expect(
         bookingsService.createPublicBooking({
           bookingTypeId: typeB, requesterName: 'Test User', requesterPhone: '01000000000',
-          scheduledDate: '2026-07-01', scheduledTime: '10:00',
+          scheduledDate: FUTURE_DATE, scheduledTime: '10:00',
           dynamicFields: [{ key: 'photo', value: { uploadToken: upload.uploadToken } }],
         })
       ).rejects.toThrow('does not belong to this booking type');
@@ -361,7 +366,7 @@ describe('Public Booking Upload Ownership', () => {
       await expect(
         bookingsService.createPublicBooking({
           bookingTypeId: typeId, requesterName: 'Test User', requesterPhone: '01000000000',
-          scheduledDate: '2026-07-01', scheduledTime: '10:00',
+          scheduledDate: FUTURE_DATE, scheduledTime: '10:00',
           dynamicFields: [{ key: 'signature', value: { uploadToken: upload.uploadToken } }],
         })
       ).rejects.toThrow('Upload was created for field');
@@ -386,7 +391,7 @@ describe('Public Booking Upload Ownership', () => {
       await expect(
         bookingsService.createPublicBooking({
           bookingTypeId: typeId, requesterName: 'Test User', requesterPhone: '01000000000',
-          scheduledDate: '2026-07-01', scheduledTime: '10:00',
+          scheduledDate: FUTURE_DATE, scheduledTime: '10:00',
           dynamicFields: [{ key: 'photo', value: { uploadToken: expired.uploadToken } }],
         })
       ).rejects.toThrow('expired');
@@ -406,7 +411,7 @@ describe('Public Booking Upload Ownership', () => {
 
       await bookingsService.createPublicBooking({
         bookingTypeId: typeId, requesterName: 'Test User', requesterPhone: '01000000000',
-        scheduledDate: '2026-07-01', scheduledTime: '10:00',
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00',
         dynamicFields: [{ key: 'photo', value: { uploadToken: upload.uploadToken } }],
       });
 
@@ -441,7 +446,7 @@ describe('Public Booking Upload Ownership', () => {
       await expect(
         bookingsService.createPublicBooking({
           bookingTypeId: typeId, requesterName: 'Test User', requesterPhone: '01000000000',
-          scheduledDate: '2026-07-01', scheduledTime: '10:00',
+          scheduledDate: FUTURE_DATE, scheduledTime: '10:00',
           dynamicFields: [{ key: 'photo', value: { uploadToken: upload.uploadToken } }],
         })
       ).rejects.toThrow('DB error');
@@ -465,7 +470,7 @@ describe('Public Booking Upload Ownership', () => {
 
       const payload = {
         bookingTypeId: typeId, requesterName: 'Test User', requesterPhone: '01000000000',
-        scheduledDate: '2026-07-01', scheduledTime: '10:00',
+        scheduledDate: FUTURE_DATE, scheduledTime: '10:00',
         dynamicFields: [{ key: 'photo', value: { uploadToken: upload.uploadToken } }],
       };
 
