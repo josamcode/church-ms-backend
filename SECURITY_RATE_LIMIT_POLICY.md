@@ -16,6 +16,27 @@ Production rate limiting must use Redis. The application validates `REDIS_REQUIR
 | Authenticated/admin mutations | Authenticated user when token is valid, otherwise IP | 15 min | 600 | Stops accidental loops and write-path abuse before expensive handlers | Production | Normal admin work unaffected |
 | Chat messages | Authenticated user | 1 min | 60 | Prevents message spam | Production | Sustained one message per second allowed |
 | Push subscription mutations | Authenticated user | 15 min | 30 | Prevents subscription churn and malformed payload spam | Production | Normal subscribe/unsubscribe flows pass |
+| AI generation endpoints | Authenticated user | 60 min | 60 | Bounds provider spend and latency exposure; layered with per-user daily AI quotas and a hard monthly spend ceiling | Production | Well above expected drafting use; only automated abuse reaches it |
+
+AI-specific controls layered on top of the rate limiter:
+
+| Control | Scope | Value | Behaviour at the limit |
+| --- | --- | ---: | --- |
+| Per-user daily quota | user + feature | 50 drafts / 30 narratives / 5 import explanations | `429 AI_QUOTA_EXCEEDED` |
+| Per-role daily quota | role | 200 SUPER_ADMIN / 100 ADMIN / 0 USER | `429 AI_QUOTA_EXCEEDED` |
+| Per-feature daily quota | system-wide | 500 / 300 / 50 | `429 AI_QUOTA_EXCEEDED` |
+| Daily spend ceiling | system-wide | `AI_DAILY_SPEND_USD` (default $5) | `503 AI_QUOTA_EXCEEDED`, provider never contacted |
+| Monthly spend ceiling | system-wide | `AI_MONTHLY_SPEND_USD` (default $100) | `503 AI_QUOTA_EXCEEDED`, full stop for the month |
+| Circuit breaker | per provider | 5 consecutive failures | Skip straight to fallback for `AI_CIRCUIT_RESET_MS` |
+
+The rate limiter bounds requests per hour to protect latency and the provider
+connection; the quotas bound requests per day to protect cost. They are
+independent — a caller can be inside the rate limit and out of quota, or the
+reverse — and both must pass.
+
+Quotas are consumed only once a provider has actually been contacted, so a
+request rejected by a kill switch, the redaction gate, or the rate limiter does
+not spend a user's daily allowance.
 
 Deployment notes:
 

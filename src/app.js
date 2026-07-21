@@ -29,6 +29,7 @@ const householdClassificationRoutes = require('./modules/householdClassification
 const aidRoutes = require('./modules/aids/aid.routes');
 const chatRoutes = require('./modules/chats/chat.routes');
 const systemAnalyticsRoutes = require('./modules/systemAnalytics/systemAnalytics.routes');
+const aiRoutes = require('./modules/ai/ai.routes');
 
 const { swaggerUi, specs } = require('./docs/swagger');
 
@@ -109,6 +110,7 @@ app.use('/api/bookings', bookingsRoutes);
 app.use('/api/household-classifications', householdClassificationRoutes);
 app.use('/api/aids', aidRoutes);
 app.use('/api/system-analytics', systemAnalyticsRoutes);
+app.use('/api/ai', aiRoutes);
 
 app.get('/api/health', (req, res) => {
   const healthData = {

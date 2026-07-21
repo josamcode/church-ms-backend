@@ -291,6 +291,58 @@ const config = {
       : '',
   },
 
+  ai: {
+    // Master kill switch. Defaults to FALSE so a deploy that has not been
+    // explicitly opted in ships with AI off, and so a missing/blanked
+    // environment fails closed rather than open.
+    enabled: parseBoolean(process.env.AI_ENABLED, false),
+
+    // Per-feature switches, each independently revocable.
+    features: {
+      notificationDraft: parseBoolean(process.env.AI_FEATURE_NOTIFICATION_DRAFT, true),
+      analyticsNarrative: parseBoolean(process.env.AI_FEATURE_ANALYTICS_NARRATIVE, true),
+      importAmbiguity: parseBoolean(process.env.AI_FEATURE_IMPORT_AMBIGUITY, true),
+    },
+
+    providers: {
+      anthropic: {
+        enabled: parseBoolean(process.env.AI_PROVIDER_ANTHROPIC_ENABLED, true),
+        apiKey: String(process.env.ANTHROPIC_API_KEY || '').trim(),
+        baseUrl: String(process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').trim(),
+        version: String(process.env.ANTHROPIC_API_VERSION || '2023-06-01').trim(),
+      },
+      openai: {
+        enabled: parseBoolean(process.env.AI_PROVIDER_OPENAI_ENABLED, true),
+        apiKey: String(process.env.OPENAI_API_KEY || '').trim(),
+        baseUrl: String(process.env.OPENAI_BASE_URL || 'https://api.openai.com').trim(),
+      },
+      // Disabled and unconfigurable-to-true without a verified paid billing
+      // account: on the free tier Google's terms permit training on prompts and
+      // human review, and the automatic-paid-terms carve-out does not cover
+      // this deployment's region.
+      gemini: {
+        enabled: parseBoolean(process.env.AI_PROVIDER_GEMINI_ENABLED, false),
+        apiKey: String(process.env.GEMINI_API_KEY || '').trim(),
+        billingAccountVerified: parseBoolean(process.env.AI_GEMINI_BILLING_VERIFIED, false),
+      },
+      // DeepSeek is rejected outright (PRC storage, trains by default,
+      // open-ended retention). There is deliberately no config entry: adding
+      // one is the change that should require review, not flipping a flag.
+    },
+
+    limits: {
+      requestTimeoutMs: parseInteger(process.env.AI_REQUEST_TIMEOUT_MS, 30000),
+      maxRetries: parseInteger(process.env.AI_MAX_RETRIES, 1),
+      dailySpendUsd: Number(process.env.AI_DAILY_SPEND_USD || 5),
+      monthlySpendUsd: Number(process.env.AI_MONTHLY_SPEND_USD || 100),
+    },
+
+    circuitBreaker: {
+      failureThreshold: parseInteger(process.env.AI_CIRCUIT_FAILURE_THRESHOLD, 5),
+      resetTimeoutMs: parseInteger(process.env.AI_CIRCUIT_RESET_MS, 60000),
+    },
+  },
+
   cache: {
     userTTL: parseInteger(process.env.CACHE_USER_TTL, 3600),
     permissionsTTL: parseInteger(process.env.CACHE_PERMISSIONS_TTL, 1800),
@@ -393,6 +445,43 @@ function validateConfig(config, envName) {
     if ((config.mail.user && !config.mail.pass) || (!config.mail.user && config.mail.pass)) {
       throw new Error('SMTP_USER and SMTP_PASS must be provided together.');
     }
+  }
+
+  // `validateConfig` is exported and called with partial config objects, so it
+  // must not assume the AI block exists. Absent AI config means AI is off,
+  // which needs no validation.
+  if (config.ai?.enabled) {
+    const anthropic = config.ai.providers.anthropic;
+    const openai = config.ai.providers.openai;
+
+    if (anthropic.enabled && !anthropic.apiKey) {
+      throw new Error('ANTHROPIC_API_KEY is required when AI_PROVIDER_ANTHROPIC_ENABLED=true.');
+    }
+    if (openai.enabled && !openai.apiKey) {
+      throw new Error('OPENAI_API_KEY is required when AI_PROVIDER_OPENAI_ENABLED=true.');
+    }
+    if (!anthropic.enabled && !openai.enabled) {
+      throw new Error('AI_ENABLED=true requires at least one enabled provider.');
+    }
+
+    // Fail the boot rather than silently sending data to a provider whose free
+    // tier trains on it. Enabling Gemini is a two-key decision on purpose.
+    if (config.ai.providers.gemini?.enabled && !config.ai.providers.gemini?.billingAccountVerified) {
+      throw new Error(
+        'AI_PROVIDER_GEMINI_ENABLED=true requires AI_GEMINI_BILLING_VERIFIED=true. '
+        + 'Without an active Cloud Billing account, Google may use prompts for training.'
+      );
+    }
+
+    if (!(config.ai.limits.dailySpendUsd > 0) || !(config.ai.limits.monthlySpendUsd > 0)) {
+      throw new Error('AI_DAILY_SPEND_USD and AI_MONTHLY_SPEND_USD must be positive numbers.');
+    }
+  }
+
+  // A production deployment must never carry a DeepSeek credential: the
+  // provider is rejected on privacy grounds and no adapter exists for it.
+  if (isProd && String(process.env.DEEPSEEK_API_KEY || '').trim()) {
+    throw new Error('DEEPSEEK_API_KEY is set but DeepSeek is a rejected provider. Remove it.');
   }
 }
 

@@ -98,6 +98,24 @@ const PERMISSIONS = Object.freeze({
   BOOKINGS_VIEW: 'BOOKINGS_VIEW',
   BOOKINGS_MANAGE: 'BOOKINGS_MANAGE',
   BOOKINGS_TYPES_MANAGE: 'BOOKINGS_TYPES_MANAGE',
+
+  // AI
+  //
+  // These are ADDITIVE, never substitutive: every AI endpoint requires an AI
+  // permission *and* the matching domain permission, so AI can never grant
+  // access a user did not already have — it only adds a way of working.
+  //
+  // Deliberately absent from ROLE_PERMISSIONS for every role, including ADMIN.
+  // They are granted per-person through `extraPermissions`, which makes
+  // enabling AI a conscious decision and gives gradual rollout without a
+  // second feature-flag mechanism.
+  //
+  // Deliberately absent from SUPER_ADMIN_ONLY_PERMISSIONS: entries there are
+  // stripped from `deniedPermissions` by `filterAssignablePermissions`, which
+  // would make these impossible to explicitly revoke from a non-super-admin.
+  AI_DRAFT_CONTENT: 'AI_DRAFT_CONTENT',
+  AI_EXPLAIN_ANALYTICS: 'AI_EXPLAIN_ANALYTICS',
+  AI_DATA_QUALITY_REVIEW: 'AI_DATA_QUALITY_REVIEW',
 });
 
 const PERMISSIONS_ARRAY = Object.values(PERMISSIONS);

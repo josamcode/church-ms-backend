@@ -112,6 +112,17 @@ const RATE_LIMIT_POLICIES = [
     userImpact: 'One message per second sustained is allowed.',
   },
   {
+    group: 'AI generation endpoints',
+    key: 'authenticated user',
+    window: '60 minutes',
+    max: 60,
+    reason:
+      'Bounds provider spend and latency exposure. Layered with per-user daily '
+      + 'AI quotas and a hard monthly spend ceiling.',
+    redisRequired: 'production',
+    userImpact: 'Well above expected drafting use; only automated abuse reaches it.',
+  },
+  {
     group: 'Push subscription mutations',
     key: 'authenticated user',
     window: '15 minutes',
@@ -449,8 +460,28 @@ const pushMutationLimiter = createRateLimiter(
   { keyGenerator: resolveRateLimitKey }
 );
 
+/**
+ * AI endpoints.
+ *
+ * Keyed on the authenticated user rather than the IP: AI routes always sit
+ * behind `authenticateJWT`, and an IP key would pool every admin behind one
+ * office NAT into a single bucket.
+ *
+ * Distinct from the daily quotas in `ai/ops/quota.service.js`. This bounds
+ * requests per hour to protect latency and the provider connection; quotas
+ * bound requests per day to protect cost. Both apply.
+ */
+const aiLimiter = createRateLimiter(
+  60 * 60 * 1000,
+  60,
+  'Too many AI requests. Please try again later.',
+  'rl:ai:',
+  { keyGenerator: resolveAuthenticatedRateLimitKey }
+);
+
 module.exports = {
   RATE_LIMIT_POLICIES,
+  aiLimiter,
   generalLimiter,
   publicReadLimiter,
   analyticsSessionLimiter,

@@ -233,3 +233,131 @@ describe('health_endpoint_does_not_expose_sensitive_values', () => {
     expect(appSource).not.toContain('redisFallback');
   });
 });
+
+// ═══════════════════════════════════════════════
+//  10. ai_configuration_fails_closed
+// ═══════════════════════════════════════════════
+describe('ai_configuration_fails_closed', () => {
+  function aiConfig(ai) {
+    return { ...baseConfig(), ai };
+  }
+
+  const PROVIDERS_OK = {
+    anthropic: { enabled: true, apiKey: 'placeholder' },
+    openai: { enabled: true, apiKey: 'placeholder' },
+    gemini: { enabled: false, apiKey: '', billingAccountVerified: false },
+  };
+  const LIMITS_OK = { dailySpendUsd: 5, monthlySpendUsd: 100 };
+
+  it('should accept a config with AI disabled and no providers', () => {
+    expect(() =>
+      validateConfig(aiConfig({ enabled: false, providers: {}, limits: {} }), 'production')
+    ).not.toThrow();
+  });
+
+  it('should accept a fully configured AI block', () => {
+    expect(() =>
+      validateConfig(aiConfig({ enabled: true, providers: PROVIDERS_OK, limits: LIMITS_OK }), 'production')
+    ).not.toThrow();
+  });
+
+  it('should reject an enabled Anthropic provider with no API key', () => {
+    expect(() =>
+      validateConfig(
+        aiConfig({
+          enabled: true,
+          providers: { ...PROVIDERS_OK, anthropic: { enabled: true, apiKey: '' } },
+          limits: LIMITS_OK,
+        }),
+        'production'
+      )
+    ).toThrow(/ANTHROPIC_API_KEY is required/);
+  });
+
+  it('should reject an enabled OpenAI provider with no API key', () => {
+    expect(() =>
+      validateConfig(
+        aiConfig({
+          enabled: true,
+          providers: { ...PROVIDERS_OK, openai: { enabled: true, apiKey: '' } },
+          limits: LIMITS_OK,
+        }),
+        'production'
+      )
+    ).toThrow(/OPENAI_API_KEY is required/);
+  });
+
+  it('should reject AI enabled with no provider at all', () => {
+    expect(() =>
+      validateConfig(
+        aiConfig({
+          enabled: true,
+          providers: {
+            anthropic: { enabled: false, apiKey: '' },
+            openai: { enabled: false, apiKey: '' },
+            gemini: { enabled: false, apiKey: '' },
+          },
+          limits: LIMITS_OK,
+        }),
+        'production'
+      )
+    ).toThrow(/at least one enabled provider/);
+  });
+
+  // Gemini's unpaid tier permits training on prompts, so a key alone must not
+  // be enough to enable it — the boot fails rather than sending data there.
+  it('should reject Gemini enabled without verified billing', () => {
+    expect(() =>
+      validateConfig(
+        aiConfig({
+          enabled: true,
+          providers: {
+            ...PROVIDERS_OK,
+            gemini: { enabled: true, apiKey: 'placeholder', billingAccountVerified: false },
+          },
+          limits: LIMITS_OK,
+        }),
+        'production'
+      )
+    ).toThrow(/AI_GEMINI_BILLING_VERIFIED/);
+  });
+
+  it('should allow Gemini once billing is verified', () => {
+    expect(() =>
+      validateConfig(
+        aiConfig({
+          enabled: true,
+          providers: {
+            ...PROVIDERS_OK,
+            gemini: { enabled: true, apiKey: 'placeholder', billingAccountVerified: true },
+          },
+          limits: LIMITS_OK,
+        }),
+        'production'
+      )
+    ).not.toThrow();
+  });
+
+  it('should reject a non-positive spend ceiling', () => {
+    expect(() =>
+      validateConfig(
+        aiConfig({ enabled: true, providers: PROVIDERS_OK, limits: { dailySpendUsd: 0, monthlySpendUsd: 100 } }),
+        'production'
+      )
+    ).toThrow(/must be positive/);
+  });
+
+  // DeepSeek is a rejected provider; a credential for it must never ship.
+  it('should reject a DeepSeek credential in production', () => {
+    const original = process.env.DEEPSEEK_API_KEY;
+    process.env.DEEPSEEK_API_KEY = 'placeholder-should-not-exist';
+    try {
+      expect(() =>
+        validateConfig(aiConfig({ enabled: false, providers: {}, limits: {} }), 'production')
+      ).toThrow(/rejected provider/);
+    } finally {
+      if (original === undefined) delete process.env.DEEPSEEK_API_KEY;
+      else process.env.DEEPSEEK_API_KEY = original;
+    }
+  });
+});
