@@ -20,6 +20,23 @@ const SECRET_PATTERNS = [
   { pattern: /ya29\.[0-9A-Za-z\-_]+/g, level: 'high', label: 'Google OAuth access token' },
   { pattern: /sk-[a-zA-Z0-9]{32,}/g, level: 'high', label: 'OpenAI/Stripe-style secret key' },
   { pattern: /AKIA[0-9A-Z]{16}/g, level: 'high', label: 'AWS access key ID' },
+
+  // ── AI provider credentials ────────────────────────────────────────────────
+  // The generic `sk-[a-zA-Z0-9]{32,}` rule above does NOT catch modern provider
+  // keys: they carry hyphenated prefixes (`sk-ant-`, `sk-proj-`), so the literal
+  // `sk-` is followed by a short segment and a hyphen rather than 32 straight
+  // alphanumerics. Each provider therefore needs its own rule.
+  { pattern: /sk-ant-[a-zA-Z0-9\-_]{24,}/g, level: 'high', label: 'Anthropic API key' },
+  { pattern: /sk-proj-[a-zA-Z0-9\-_]{24,}/g, level: 'high', label: 'OpenAI project API key' },
+  { pattern: /sk-svcacct-[a-zA-Z0-9\-_]{24,}/g, level: 'high', label: 'OpenAI service account key' },
+  { pattern: /\bAIza[0-9A-Za-z\-_]{35}\b/g, level: 'high', label: 'Google AI / Gemini API key' },
+  { pattern: /\bgsk_[a-zA-Z0-9]{40,}/g, level: 'high', label: 'Groq API key' },
+  { pattern: /\bxai-[a-zA-Z0-9]{40,}/g, level: 'high', label: 'xAI API key' },
+  {
+    pattern: /(?:ANTHROPIC|OPENAI|GEMINI|GOOGLE_AI|GOOGLE_GENAI|DEEPSEEK|AI_PROVIDER)[A-Z0-9_]*(?:API)?_?KEY\s*[:=]\s*['"](?!\{)(?![A-Z_]{4,}['"])[^'"]{8,}['"]/g,
+    level: 'high',
+    label: 'AI provider API key assignment',
+  },
   { pattern: /[Jj][Ww][Tt][-_]?[Ss][Ee][Cc][Rr][Ee][Tt]\s*[:=]\s*['"][^'"]{8,}['"]/gi, level: 'high', label: 'JWT secret in config' },
   { pattern: /MONGO(?:DB)?[_-]?URI\s*[:=]\s*['"]mongodb(?:\+srv)?:\/\/[^:]+:[^@]+@/gi, level: 'high', label: 'MongoDB URI with credentials' },
   { pattern: /REDIS(?:CLOUD)?[_-]?URL\s*[:=]\s*['"]redis:\/\/[^:]+:[^@]+@/gi, level: 'high', label: 'Redis URL with credentials' },
@@ -217,41 +234,6 @@ function isAllowedCredentialFile(relativePath) {
   return false;
 }
 
-// Main
-console.log('🔍 Scanning for secrets...\n');
-
-// Load gitignore patterns first
-GITIGNORE_PATTERNS = loadGitignorePatterns();
-
-const allFiles = walkDir(PROJECT_ROOT);
-console.log(`  Checking ${allFiles.length} files...`);
-
-let allFindings = [];
-
-// Check file contents
-for (const filePath of allFiles) {
-  const relativePath = path.relative(PROJECT_ROOT, filePath);
-
-  // Skip files covered by .gitignore
-  if (isGitignored(relativePath)) continue;
-
-  const findings = checkFileForSecrets(filePath);
-
-  // Filter findings from allowed credential files and test directories
-  const filteredFindings = findings.filter((f) => {
-    if (isAllowedCredentialFile(f.file)) {
-      return false;
-    }
-    return true;
-  });
-
-  allFindings = allFindings.concat(filteredFindings);
-}
-
-// Check for sensitive files
-const sensitiveFileFindings = checkSensitiveFiles();
-allFindings = allFindings.concat(sensitiveFileFindings);
-
 // Known false positives — exact (file, line, label) tuples that are safe.
 // These are narrow; they suppress only the listed findings, not patterns.
 const KNOWN_FALSE_POSITIVES = new Set([
@@ -261,44 +243,97 @@ const KNOWN_FALSE_POSITIVES = new Set([
   'src/modules/auth/auth.service.js:450:Base64 string (possible token)',
 ]);
 
-// De-duplicate by file+line+label
-const seen = new Set();
-const unique = allFindings.filter((f) => {
-  const normalizedFile = f.file.replace(/\\/g, '/');
-  const key = `${normalizedFile}:${f.line}:${f.label}`;
-  if (KNOWN_FALSE_POSITIVES.has(key)) return false;
-  if (seen.has(key)) return false;
-  seen.add(key);
-  return true;
-});
-
-const highFindings = unique.filter((f) => f.level === 'high');
-const mediumFindings = unique.filter((f) => f.level === 'medium');
-
-if (highFindings.length > 0) {
-  console.log(`\n❌ HIGH-confidence findings (${highFindings.length}):`);
-  for (const f of highFindings) {
-    console.log(`  ${f.file}:${f.line} — ${f.label}`);
-    console.log(`    → ${f.context}`);
+/**
+ * Scan a string for secrets without touching the filesystem.
+ * Exposed so the pattern set can be unit-tested against synthetic keys —
+ * real keys must never appear in a fixture.
+ */
+function scanContent(content, relativePath = '<memory>') {
+  const findings = [];
+  for (const { pattern, level, label } of SECRET_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      const context = match[0].length > 80 ? match[0].substring(0, 80) + '...' : match[0];
+      findings.push({ file: relativePath, line: lineNumber, level, label, context });
+    }
   }
+  return findings;
 }
 
-if (mediumFindings.length > 0) {
-  console.log(`\n⚠️  MEDIUM-confidence findings (${mediumFindings.length}):`);
-  for (const f of mediumFindings) {
-    console.log(`  ${f.file}:${f.line} — ${f.label}`);
-    console.log(`    → ${f.context}`);
+/** Run the full repository scan. Returns the deduplicated finding list. */
+function collectFindings() {
+  GITIGNORE_PATTERNS = loadGitignorePatterns();
+
+  const allFiles = walkDir(PROJECT_ROOT);
+  let allFindings = [];
+
+  for (const filePath of allFiles) {
+    const relativePath = path.relative(PROJECT_ROOT, filePath);
+    if (isGitignored(relativePath)) continue;
+
+    const findings = checkFileForSecrets(filePath);
+    allFindings = allFindings.concat(findings.filter((f) => !isAllowedCredentialFile(f.file)));
   }
+
+  allFindings = allFindings.concat(checkSensitiveFiles());
+
+  const seen = new Set();
+  return allFindings.filter((f) => {
+    const key = `${f.file.replace(/\\/g, '/')}:${f.line}:${f.label}`;
+    if (KNOWN_FALSE_POSITIVES.has(key)) return false;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-if (unique.length === 0) {
-  console.log('\n✅ No secrets found.');
-  process.exit(0);
-} else {
+function main() {
+  console.log('🔍 Scanning for secrets...\n');
+
+  const unique = collectFindings();
+  const highFindings = unique.filter((f) => f.level === 'high');
+  const mediumFindings = unique.filter((f) => f.level === 'medium');
+
+  if (highFindings.length > 0) {
+    console.log(`\n❌ HIGH-confidence findings (${highFindings.length}):`);
+    for (const f of highFindings) {
+      console.log(`  ${f.file}:${f.line} — ${f.label}`);
+      console.log(`    → ${f.context}`);
+    }
+  }
+
+  if (mediumFindings.length > 0) {
+    console.log(`\n⚠️  MEDIUM-confidence findings (${mediumFindings.length}):`);
+    for (const f of mediumFindings) {
+      console.log(`  ${f.file}:${f.line} — ${f.label}`);
+      console.log(`    → ${f.context}`);
+    }
+  }
+
+  if (unique.length === 0) {
+    console.log('\n✅ No secrets found.');
+    return 0;
+  }
+
   console.log(`\n🚨 ${unique.length} potential secret(s) detected.`);
   if (highFindings.length > 0) {
     console.log('   High-confidence findings should be addressed immediately.');
     console.log('   Rotate any exposed secrets and add files to .gitignore.');
   }
-  process.exit(1);
+  return 1;
 }
+
+// Only run the scan when invoked as a script, so tests can require the module.
+if (require.main === module) {
+  process.exit(main());
+}
+
+module.exports = {
+  SECRET_PATTERNS,
+  scanContent,
+  checkFileForSecrets,
+  collectFindings,
+  main,
+};
