@@ -288,7 +288,16 @@ describe('shutdown and architectural boundaries', () => {
 
   test('users-only module load does not initialize R2 or load the broad user service', () => {
     const script = path.resolve(__dirname, '../../scripts/importChurchServiceUsers.js');
-    const output = execFileSync(process.execPath, ['-e', `require(${JSON.stringify(script)}); console.log(Boolean(require.cache[${JSON.stringify(path.resolve(__dirname, '../../src/modules/users/user.service.js'))}]))`], { encoding: 'utf8' });
+    // The subprocess must not inherit Jest's FORCE_COLOR: with it set, Node
+    // colorizes the boolean primitive (`console.log(false)` → `[33mfalse[39m`),
+    // and `.trim()` does not strip ANSI, so the plain-string compare fails on a
+    // value that is actually correct. FORCE_COLOR=0 makes the output
+    // deterministic without touching the architectural assertion.
+    const output = execFileSync(
+      process.execPath,
+      ['-e', `require(${JSON.stringify(script)}); console.log(Boolean(require.cache[${JSON.stringify(path.resolve(__dirname, '../../src/modules/users/user.service.js'))}]))`],
+      { encoding: 'utf8', env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' } }
+    );
     expect(output.trim()).toBe('false');
     expect(output).not.toMatch(/R2 storage/);
   });
