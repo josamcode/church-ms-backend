@@ -77,6 +77,18 @@ async function main() {
   console.log(`[REVIEW] generatedFieldsHash=${output.metadata.generatedFieldsHash}`);
 }
 
-main().catch((error) => { console.error(`Resolution workbook generation failed: ${error.message}`); process.exitCode = 1; }).finally(async () => mongoose.disconnect());
+// CLI guard: run `main()` only when this file is executed directly, never when
+// it is `require`d (a test importing it for `parseArgs`, or another script
+// reusing it). Without this guard, importing the module fired the full CLI —
+// connecting to Mongo and reading a default `plan.json` that does not exist in
+// a test run — emitting an ENOENT to stderr at import time.
+if (require.main === module) {
+  main()
+    .catch((error) => {
+      console.error(`Resolution workbook generation failed: ${error.message}`);
+      process.exitCode = 1;
+    })
+    .finally(async () => mongoose.disconnect());
+}
 
-module.exports = { parseArgs };
+module.exports = { parseArgs, main };

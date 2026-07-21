@@ -189,3 +189,33 @@ describe('resolution-aware occurrence and operation planning', () => {
     expect(() => assertResolutionApplyPreconditions({ plan, currentResolutionWorkbookHash: 'changed', currentDatabaseFingerprint: 'db' })).toThrow(/workbook checksum mismatch/);
   });
 });
+
+describe('workbook generator CLI guard', () => {
+  const { execFileSync } = require('child_process');
+  const generatorScript = path.resolve(__dirname, '../../scripts/generateChurchServiceResolutionWorkbook.js');
+
+  test('requiring the module runs no CLI side effect and emits no ENOENT', () => {
+    // Importing the generator must NOT fire main() — no Mongo connection, no
+    // attempt to read a default plan.json. FORCE_COLOR=0 keeps output plain.
+    const output = execFileSync(
+      process.execPath,
+      ['-e', `const m = require(${JSON.stringify(generatorScript)}); process.stdout.write(typeof m.parseArgs + ',' + typeof m.main);`],
+      { encoding: 'utf8', env: { ...process.env, NODE_ENV: 'test', FORCE_COLOR: '0', NO_COLOR: '1' } }
+    );
+
+    expect(output).toBe('function,function');
+    expect(output).not.toMatch(/ENOENT/);
+    expect(output).not.toMatch(/plan\.json/);
+    expect(output).not.toMatch(/generation failed/);
+  });
+
+  test('exports parseArgs and main without invoking either', () => {
+    // eslint-disable-next-line global-require
+    const mod = require('../../scripts/generateChurchServiceResolutionWorkbook');
+    expect(typeof mod.parseArgs).toBe('function');
+    expect(typeof mod.main).toBe('function');
+    // parseArgs still behaves as the CLI parser.
+    expect(mod.parseArgs(['--ai-explain']).aiExplain).toBe(true);
+    expect(() => mod.parseArgs(['--nope'])).toThrow(/Unknown argument/);
+  });
+});
