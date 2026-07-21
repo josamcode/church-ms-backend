@@ -11,16 +11,21 @@ const { databaseFingerprint } = require('./churchServiceResolution/workbookSuppo
 const { buildWorkbookData } = require('./churchServiceResolution/workbookData');
 const { reportDirectoryName, generateResolutionWorkbook } = require('./churchServiceResolution/workbookGenerator');
 const { buildHigherLevelPlan, writeHigherLevelReports } = require('./churchServiceResolution/higherLevelReports');
+const { annotateCandidateRows } = require('./churchServiceResolution/aiAmbiguityExplainer');
 
 const DEFAULT_INPUT = path.resolve(__dirname, '..', '..', 'بيانات الخدمة الكنسيه.xlsx');
 const DEFAULT_REPORT = path.resolve(__dirname, '..', 'reports', 'church-service-blocker-resolution-20260719-052801', 'plan.json');
 const REPORTS_ROOT = path.resolve(__dirname, '..', 'reports');
 
 function parseArgs(argv) {
-  const options = { input: DEFAULT_INPUT, blockerReport: DEFAULT_REPORT };
+  // `aiExplain` defaults to false: without the flag this script behaves
+  // exactly as it did before, and no data is sent anywhere.
+  const options = { input: DEFAULT_INPUT, blockerReport: DEFAULT_REPORT, aiExplain: false, aiMaxRows: 200 };
   for (const token of argv) {
     if (token.startsWith('--input=')) options.input = path.resolve(token.slice(8).replace(/^"|"$/g, ''));
     else if (token.startsWith('--blocker-report=')) options.blockerReport = path.resolve(token.slice(17).replace(/^"|"$/g, ''));
+    else if (token === '--ai-explain') options.aiExplain = true;
+    else if (token.startsWith('--ai-max-rows=')) options.aiMaxRows = Math.max(Number(token.slice(14)) || 0, 0);
     else throw new Error(`Unknown argument: ${token}`);
   }
   return options;
@@ -41,6 +46,15 @@ async function main() {
   ]);
   const fingerprint = databaseFingerprint({ databaseName: mongoose.connection.name, host: mongoose.connection.host, port: mongoose.connection.port });
   const data = buildWorkbookData({ resolutionPlan, sourceAssignmentPlan, parsedRows: parsed.rows, users, meetings });
+
+  // Advisory ambiguity explanations. Opt-in, best-effort, and excluded from the
+  // generated-fields hash — a failure here leaves the columns empty and the
+  // workbook otherwise identical.
+  await annotateCandidateRows(data.candidateRows, {
+    enabled: options.aiExplain,
+    maxRows: options.aiMaxRows,
+  });
+
   const generatedAt = new Date();
   const reportDir = path.join(REPORTS_ROOT, reportDirectoryName(generatedAt));
   const outputPath = path.join(reportDir, 'church-service-manual-resolution.xlsx');
